@@ -1,0 +1,94 @@
+\documentclass[a4paper,bibliography=totocnumbered,parskip=half,draft]{scrbook}
+\usepackage[utf8]{inputenc}
+\usepackage[backend=biber]{biblatex}
+\usepackage[english]{babel}
+\usepackage{csquotes}
+\usepackage{hyperref}
+\usepackage{url}
+\usepackage{scrhack}
+\usepackage{listings}
+\usepackage{graphicx}
+\usepackage[T1]{fontenc}
+\usepackage{amsmath}
+\usepackage[obeyFinal]{todonotes}
+\usepackage{blindtext}
+
+% Kapitelüberschrift in der Kopfzeile
+\usepackage[automark]{scrpage2} % Schickerer Satzspiegel mit KOMA-Script
+\pagestyle{scrheadings}
+\setheadsepline{.4pt}
+
+\clubpenalty10000
+\widowpenalty10000
+
+\bibliography{accelerate}
+
+\newcommand{\executeIffilenewer}[3]{
+ \ifnum\pdfstrcmp{\pdffilemoddate{#1}}
+ {\pdffilemoddate{#2}}>0
+ {\immediate\write18{#3}}\fi
+}
+\newcommand{\includesvg}[2][]{
+ \executeIffilenewer{#2.svg}{#2.pdf}
+ {inkscape -z -D --file=#2.svg --export-pdf=#2.pdf}
+ \includegraphics[#1]{#2.pdf}
+}
+
+\lstset{language=Haskell,
+        basicstyle=\ttfamily,
+        captionpos=b,
+        inputencoding=utf8,
+        extendedchars=\true} 
+
+
+\begin{document}
+
+\frontmatter
+
+% Titelseite - ganz einfach
+\titlehead{
+  {\large Arbeitsgruppe Programmiersprachen und Übersetzerkonstruktion}\\
+  Institut für Informatik\\
+  Christian-Albrechts-Universität zu Kiel}
+\subject{Master Thesis}
+\date{\today}
+%opening
+\title{An LLVM Backend for Accelerate}
+\author{Timo von Holtz}
+\publishers{Betreuer: Priv.-Doz. Dr. Frank Huch}
+\maketitle
+
+\chapter*{Statutory Declaration}
+
+I, Timo von Holtz, hereby declare that I have written this thesis independently, unless where clearly stated otherwise.
+I have used only the sources, the data and the support that I have clearly mentioned.
+This thesis has not been submitted for conferral of degree elsewhere. 
+
+\today
+\begin{flushright}
+\rule{6cm}{0.4pt} \\
+Timo von Holtz
+\end{flushright}
+\clearpage
+% oder auch manuell
+
+% Verzeichnisse
+\listoftodos
+\tableofcontents   % Inhaltsverzeichnis
+\listoffigures     % Abbildungsverzeichnis
+\listoftables      % Tabellenverzeichnis
+\lstlistoflistings % Abbildungsverzeichnis
+\mainmatter
+
+\chapter{Introduction}
+\Blindtext
+\missingfigure{bla}
+\Blindtext 
+
+
+
+\appendix
+
+\backmatter
+\printbibliography
+\end{document}
