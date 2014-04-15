@@ -33,3 +33,9 @@
 *.bcf
 *.lol
 *.run.xml
+*~*
+.predictive
+*.backup
+auto
+_region_.tex
+*blx.bib

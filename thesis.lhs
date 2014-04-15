@@ -1,4 +1,6 @@
 \documentclass[a4paper,bibliography=totocnumbered,parskip=half]{scrbook}
+%include polycode.fmt
+\usepackage{lhs}
 \usepackage[utf8]{inputenc}
 \usepackage[backend=biber]{biblatex}
 \usepackage[english]{babel}
@@ -6,7 +8,6 @@
 \usepackage{hyperref}
 \usepackage{url}
 \usepackage{scrhack}
-\usepackage{listings}
 \usepackage{graphicx}
 \usepackage[T1]{fontenc}
 \usepackage{amsmath}
@@ -34,13 +35,6 @@
  \includegraphics[#1]{#2.pdf}
 }
 
-\lstset{language=Haskell,
-        basicstyle=\ttfamily,
-        captionpos=b,
-        inputencoding=utf8,
-        extendedchars=\true} 
-
-
 \begin{document}
 
 \frontmatter
@@ -62,14 +56,13 @@
 
 Ich erkläre hiermit an Eides statt, dass ich die vorliegende Arbeit ohne Hilfe Dritter und ohne Benutzung anderer als der angegebenen Hilfsmittel angefertigt habe;
 die aus fremden Quellen direkt oder indirekt übernommenen Gedanken sind als solche kenntlich gemacht. 
-Die Arbeit wurde bisher in gleicher oderähnlicher For in keiner anderen Prüfungsbehörde vorgelegt und auch noch nicht veröffentlicht.
-
+Die Arbeit wurde bisher in gleicher oder ähnlicher Form in keiner anderen Prüfungsbehörde vorgelegt und auch noch nicht veröffentlicht.
 
 \today
 \begin{flushright}
 \rule{6cm}{0.4pt} \\
 Timo von Holtz
-\end{flushright}
+\end{flushright} 
 \clearpage
 % oder auch manuell
 
@@ -86,7 +79,7 @@ Timo von Holtz
 \Blindtext
 
 \chapter{Contributions}
-\section{language-llvm-quote}
+\section{llvm-general-quote}
 When writing a compiler using LLVM in Haskell there is a good tutorial on how to do it at \citeurl{diehl2014jit}.
 It uses \citetitle{scarlet2013llvm} to interface with LLVM.
 The general idea is to use a monadic generator to produce the AST on the fly.
@@ -94,14 +87,19 @@ This has some obvious drawbacks, as the code can get unreadable pretty quickly. 
 
 A solution is to use quasiquotation\cite{mainland2007quote}.
 That way, one can write the llvm-ir directly, without having to manipulate the AST by hand.
-This could also be done with a simple parser though.
+This could also be done with a simple parser though. 
 The main advantage of quasiquotation is, the use of antiquotation.
 They allow you to reference arbitrary Haskell values inside the quotation.
 
 I implemented \citetitle{holtz2014quote}, a quasiquotation library for LLVM.
 The design is inspired by \citetitle{mainland2007c}, which is also used in the cuda implementation of Accelerate.
 I use \citetitle{gill1995happy} and \citetitle{alex}.
-\todo{writeup of languale-llvm-quote}
+\todo{writeup of llvm-general-quote}
+
+
+\begin{code}
+test = putStrLn "bla"
+\end{code}
 
 
 \appendix
