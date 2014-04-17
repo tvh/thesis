@@ -13,6 +13,13 @@
 \usepackage{amsmath}
 \usepackage[obeyFinal]{todonotes}
 \usepackage{multirow}% http://ctan.org/pkg/multirow
+\usepackage{listings}
+
+\lstset{basicstyle=\footnotesize,
+        breaklines=true,
+        numbers=left,
+        numberstyle=\tiny,
+        frame=single}
 
 % Kapitelüberschrift in der Kopfzeile
 \usepackage[automark]{scrpage2} % Schickerer Satzspiegel mit KOMA-Script
@@ -98,7 +105,6 @@ Timo von Holtz
 \tableofcontents   % Inhaltsverzeichnis
 \listoffigures     % Abbildungsverzeichnis
 \listoftables      % Tabellenverzeichnis
-%\lstlistoflistings % Abbildungsverzeichnis
 \mainmatter
 
 \chapter{Introduction}
@@ -158,6 +164,9 @@ define double @sum(double* %a, i32 %length) {
 \caption{sum as a LLVM}
 \label{fig:sumll}
 \end{figure}
+
+\subsection{Optimization}
+\subsection{Vectorization}
 
 \section{Accelerate}
 
@@ -276,6 +285,99 @@ I use \citetitle{gill1995happy} and \citetitle{alex}.
 
 
 \appendix
+\chapter{Listings}
+\begin{lstlisting}[language=llvm]
+; Function Attrs: nounwind readonly
+define double @@sum(double* nocapture readonly %a, i32 %length) #0 {
+  %1 = icmp sgt i32 %length, 0
+  br i1 %1, label %.lr.ph.preheader, label %._crit_edge
+
+.lr.ph.preheader:                                 ; preds = %0
+  %2 = add i32 %length, -1
+  %3 = zext i32 %2 to i64
+  %4 = add i64 %3, 1
+  %end.idx = add i64 %3, 1
+  %n.vec = and i64 %4, 8589934576
+  %cmp.zero = icmp eq i64 %n.vec, 0
+  br i1 %cmp.zero, label %middle.block, label %vector.body
+
+vector.body:                                      ; preds = %.lr.ph.preheader, %vector.body
+  %index = phi i64 [ %index.next, %vector.body ], [ 0, %.lr.ph.preheader ]
+  %vec.phi = phi <4 x double> [ %13, %vector.body ],
+                              [ zeroinitializer, %.lr.ph.preheader ]
+  %vec.phi6 = phi <4 x double> [ %14, %vector.body ],
+                               [ zeroinitializer, %.lr.ph.preheader ]
+  %vec.phi7 = phi <4 x double> [ %15, %vector.body ],
+                               [ zeroinitializer, %.lr.ph.preheader ]
+  %vec.phi8 = phi <4 x double> [ %16, %vector.body ],
+                               [ zeroinitializer, %.lr.ph.preheader ]
+  %5 = getelementptr double* %a, i64 %index
+  %6 = bitcast double* %5 to <4 x double>*
+  %wide.load = load <4 x double>* %6, align 8
+  %.sum22 = or i64 %index, 4
+  %7 = getelementptr double* %a, i64 %.sum22
+  %8 = bitcast double* %7 to <4 x double>*
+  %wide.load9 = load <4 x double>* %8, align 8
+  %.sum23 = or i64 %index, 8
+  %9 = getelementptr double* %a, i64 %.sum23
+  %10 = bitcast double* %9 to <4 x double>*
+  %wide.load10 = load <4 x double>* %10, align 8
+  %.sum24 = or i64 %index, 12
+  %11 = getelementptr double* %a, i64 %.sum24
+  %12 = bitcast double* %11 to <4 x double>*
+  %wide.load11 = load <4 x double>* %12, align 8
+  %13 = fadd <4 x double> %vec.phi, %wide.load
+  %14 = fadd <4 x double> %vec.phi6, %wide.load9
+  %15 = fadd <4 x double> %vec.phi7, %wide.load10
+  %16 = fadd <4 x double> %vec.phi8, %wide.load11
+  %index.next = add i64 %index, 16
+  %17 = icmp eq i64 %index.next, %n.vec
+  br i1 %17, label %middle.block, label %vector.body, !llvm.loop !0
+
+middle.block:                                     ; preds = %vector.body, %.lr.ph.preheader
+  %resume.val = phi i64 [ 0, %.lr.ph.preheader ], [ %n.vec, %vector.body ]
+  %rdx.vec.exit.phi = phi <4 x double> [ zeroinitializer, %.lr.ph.preheader ],
+                                       [ %13, %vector.body ]
+  %rdx.vec.exit.phi14 = phi <4 x double> [ zeroinitializer, %.lr.ph.preheader ],
+                                         [ %14, %vector.body ]
+  %rdx.vec.exit.phi15 = phi <4 x double> [ zeroinitializer, %.lr.ph.preheader ],
+                                         [ %15, %vector.body ]
+  %rdx.vec.exit.phi16 = phi <4 x double> [ zeroinitializer, %.lr.ph.preheader ],
+                                         [ %16, %vector.body ]
+  %bin.rdx = fadd <4 x double> %rdx.vec.exit.phi14, %rdx.vec.exit.phi
+  %bin.rdx17 = fadd <4 x double> %rdx.vec.exit.phi15, %bin.rdx
+  %bin.rdx18 = fadd <4 x double> %rdx.vec.exit.phi16, %bin.rdx17
+  %rdx.shuf = shufflevector <4 x double> %bin.rdx18, <4 x double> undef, <4 x i32> <i32 2, i32 3, i32 undef, i32 undef>
+  %bin.rdx19 = fadd <4 x double> %bin.rdx18, %rdx.shuf
+  %rdx.shuf20 = shufflevector <4 x double> %bin.rdx19, <4 x double> undef, <4 x i32> <i32 1, i32 undef, i32 undef, i32 undef>
+  %bin.rdx21 = fadd <4 x double> %bin.rdx19, %rdx.shuf20
+  %18 = extractelement <4 x double> %bin.rdx21, i32 0
+  %cmp.n = icmp eq i64 %end.idx, %resume.val
+  br i1 %cmp.n, label %._crit_edge, label %.lr.ph
+
+.lr.ph:                                           ; preds = %middle.block, %.lr.ph
+  %indvars.iv = phi i64 [ %indvars.iv.next, %.lr.ph ], [ %resume.val, %middle.block ]
+  %x.01 = phi double [ %21, %.lr.ph ], [ %18, %middle.block ]
+  %19 = getelementptr double* %a, i64 %indvars.iv
+  %20 = load double* %19, align 8
+  %21 = fadd fast double %x.01, %20
+  %indvars.iv.next = add i64 %indvars.iv, 1
+  %lftr.wideiv1 = trunc i64 %indvars.iv.next to i32
+  %exitcond2 = icmp eq i32 %lftr.wideiv1, %length
+  br i1 %exitcond2, label %._crit_edge, label %.lr.ph, !llvm.loop !3
+
+._crit_edge:                                      ; preds = %.lr.ph, %middle.block, %0
+  %x.0.lcssa = phi double [ 0.000000e+00, %0 ], [ %21, %.lr.ph ], [ %18, %middle.block ]
+  ret double %x.0.lcssa
+}
+
+attributes #0 = { nounwind readonly }
+
+!0 = metadata !{metadata !0, metadata !1, metadata !2}
+!1 = metadata !{metadata !"llvm.vectorizer.width", i32 1}
+!2 = metadata !{metadata !"llvm.vectorizer.unroll", i32 1}
+!3 = metadata !{metadata !3, metadata !1, metadata !2}
+\end{lstlisting}
 
 \backmatter
 \sloppy
