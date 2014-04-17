@@ -2,7 +2,7 @@
 %include polycode.fmt
 \usepackage{lhs}
 \usepackage[utf8]{inputenc}
-\usepackage[backend=biber]{biblatex}
+\usepackage[backend=biber,style=alphabetic]{biblatex}
 \usepackage[english]{babel}
 \usepackage{csquotes}
 \usepackage{hyperref}
@@ -12,12 +12,12 @@
 \usepackage[T1]{fontenc}
 \usepackage{amsmath}
 \usepackage[obeyFinal]{todonotes}
-\usepackage{blindtext}
+\usepackage{multirow}% http://ctan.org/pkg/multirow
 
 % Kapitelüberschrift in der Kopfzeile
 \usepackage[automark]{scrpage2} % Schickerer Satzspiegel mit KOMA-Script
 \pagestyle{scrheadings}
-\setheadsepline{.4pt}
+\setheadsepline{.5pt}
 
 \clubpenalty10000
 \widowpenalty10000
@@ -35,28 +35,55 @@
  \includegraphics[#1]{#2.pdf}
 }
 
+
+
 \begin{document}
 
 \frontmatter
 
-% Titelseite - ganz einfach
-\titlehead{
-  {\large Programming Languages and Compiler Construction}\\
-  Department of Computer Science\\
-  Christian-Albrechts-University of Kiel}
-\subject{Master Thesis}
-\date{\today}
-%opening
-\title{An LLVM Backend for Accelerate}
-\author{Timo von Holtz}
-\publishers{Advised By:\\Priv.-Doz. Dr. Frank Huch\\Assoc. Prof. Dr. Manuel M T Chakravarty}
-\maketitle
+\pagestyle{empty}
 
-\chapter*{Erklärung der Urheberschaft}
+\begin{center}
+{\huge \it Master Thesis}
 
-Ich erkläre hiermit an Eides statt, dass ich die vorliegende Arbeit ohne Hilfe Dritter und ohne Benutzung anderer als der angegebenen Hilfsmittel angefertigt habe;
-die aus fremden Quellen direkt oder indirekt übernommenen Gedanken sind als solche kenntlich gemacht. 
-Die Arbeit wurde bisher in gleicher oder ähnlicher Form in keiner anderen Prüfungsbehörde vorgelegt und auch noch nicht veröffentlicht.
+\vspace{2cm}
+
+{\Large \bf An LLVM Backend for Accelerate}
+
+\vspace{1.75cm}
+
+\includegraphics[height=6cm]{CAU-Siegel}
+
+\vspace{1.75cm}
+
+{\large Programming Languages and Compiler Construction\\
+   Department of Computer Science\\
+   Christian-Albrechts-University of Kiel
+}
+
+\end{center}
+
+\vspace{2cm}
+
+\begin{tabular}{ll}
+angefertigt von: & {\bf Timo von Holtz} \\
+\multirow{2}{*}{advised by:} & Priv.-Doz. Dr. Frank Huch\\
+ & Assoc. Prof. Dr. Manuel M T Chakravarty
+\end{tabular}
+
+\vspace{1cm}
+
+\begin{center}
+Kiel, \today
+\end{center}
+
+\cleardoublepage
+
+\chapter*{Selbstständigkeitserklärung}
+
+Ich erkläre hiermit, dass ich die vorliegende Arbeit selbstständig und nur unter
+Verwendung der angegebenen Literatur und Hilfsmittel angefertigt habe.
+
 
 \today
 \begin{flushright}
@@ -77,12 +104,64 @@ Timo von Holtz
 \chapter{Introduction}
 \todo{Write Introduction}
 
+\chapter{Technologies}
+\section{LLVM}
+LLVM\cite{lattner2002llvm} is a compiler infrastructure written in C++.
+In contrast to GCC it is designed to be used as a library by compilers.
+Originally implemented for C and C++, the language-agnostic design (and the success) of LLVM has since spawned a wide variety of front ends: languages with compilers that use LLVM include ActionScript, Ada, D, Fortran, OpenGL Shading Language, Haskell, Java bytecode, Julia, Objective-C, Python, Ruby, Rust, Scala and C.
+
+\subsection{LLVM IR}
+LLVM defines it's own language to represent programs.
+It uses Static Single Assignment (SSA) form.\cite{alpern1988detecting,rosen1988global}
+A program is said to be in SSA form if each of its variables is defined exactly once, and each use of a variable is dominated by that variable’s definition.
+SSA form greatly simplifies many dataflow optimizations because only a single definition can reach a particular use of a value, and finding that definition is trivial.
+
+\begin{figure}[htb]
+\begin{verbatim}
+double dotp(double* a, double* b, int length) {
+  double x = 0;
+  for (int i=0;i<length;i++) {
+    x += a[i]*b[i];
+  }
+  return x;
+}
+\end{verbatim}
+\end{figure}
+
+\begin{figure}[htb]
+\begin{verbatim}
+define double @sum(double* %a, i32 %length) {
+  %1 = icmp sgt i32 %length, 0
+  br i1 %1, label %.lr.ph, label %._crit_edge
+
+.lr.ph:                                           ; preds = %0, %.lr.ph
+  %indvars.iv = phi i64 [ %indvars.iv.next, %.lr.ph ], [ 0, %0 ]
+  %x.01 = phi double [ %4, %.lr.ph ], [ 0.000000e+00, %0 ]
+  %2 = getelementptr double* %a, i64 %indvars.iv
+  %3 = load double* %2
+  %4 = fadd double %x.01, %3
+  %indvars.iv.next = add i64 %indvars.iv, 1
+  %lftr.wideiv = trunc i64 %indvars.iv.next to i32
+  %exitcond = icmp eq i32 %lftr.wideiv, %length
+  br i1 %exitcond, label %._crit_edge, label %.lr.ph
+
+._crit_edge:                                      ; preds = %.lr.ph, %0
+  %x.0.lcssa = phi double [ 0.000000e+00, %0 ], [ %4, %.lr.ph ]
+  ret double %x.0.lcssa
+}
+\end{verbatim}
+\end{figure}
+
+\section{Accelerate}
+
 \chapter{Contributions}
 \section{llvm-general-quote}
 When writing a companyiler using LLVM in Haskell there is a good tutorial on how to do it at \citeurl{diehl2014jit}.
 It uses \citetitle{scarlet2013llvm} to interface with LLVM.
 The general idea is to use a monadic generator to produce the AST on the fly.
-Let's look at an code fragment to get an idea how this works.
+
+Figure \ref{fig:formonad} shows how to implement a simple for loop using monadic generators.
+\begin{figure}
 \begin{code}
 for :: Type                             -- type of the index
     -> Operand                          -- starting index
@@ -95,23 +174,26 @@ for ti start test incr body = do
   exit  <- newBlock "for.exit"
 
   -- entry test
-  c     <- test start
-  top   <- cbr c loop exit
+  c    <- test start
+  top  <- cbr c loop exit
 
   -- Main loop
   setBlock loop
-  c_i   <- freshName
-  let i  = local c_i
+  c_i <- freshName
+  let i = local c_i
 
   body i
 
-  i'    <- incr i
-  c'    <- test i'
-  bot   <- cbr c' loop exit
-  _     <- phi loop c_i ti [(i',bot), (start,top)]
+  i'   <- incr i
+  c'   <- test i'
+  bot  <- cbr c' loop exit
+  _    <- phi loop c_i ti [(i',bot), (start,top)]
 
   setBlock exit
 \end{code}
+\caption{Monadic generation of for loop}
+\label{fig:formonad}
+\end{figure}
 As you can tell this is much boilerplate code.
 We have to define the basic blocks manually and add the instructions one by one.
 This has some obvious drawbacks, as the code can get unreadable pretty quickly.
@@ -120,8 +202,7 @@ A solution is to use quasiquotation\cite{mainland2007quote} instead.
 The idea behind quasiquotation is, that you can define a DSL with arbitrary syntax, which you can then directly transform into Haskell data structures.
 This is done at compile-time, so you get the same type safety as writing the AST by hand.
 
-I implemented \citetitle{holtz2014quote}, a quasiquotation library for LLVM.
-Using my library, the code using a loop looks like this:
+\begin{figure}
 \begin{verbatim}
 [llg|
 define i64 @foo(i64 %start, i64 %end) {
@@ -136,7 +217,14 @@ define i64 @foo(i64 %start, i64 %end) {
 }
 |]
 \end{verbatim}
-This will expand to the following LLVM IR:
+\caption{For Loop using \citetitle{holtz2014quote}}
+\label{fig:forquote}
+\end{figure}
+
+I implemented \citetitle{holtz2014quote}, a quasiquotation library for LLVM.
+Figure \ref{fig:forquote} shows a for loop using my library.
+
+\begin{figure}
 \begin{verbatim}
 define i64 @foo(i64 %start, i64 %end) {
 entry:
@@ -157,6 +245,11 @@ for.body:                              ; preds = %for
   br label %for
 }
 \end{verbatim}
+\caption{Expanded For Loop}
+\label{fig:forquote1}
+\end{figure}
+
+Figure \ref{fig:forquote1} shows the resulting LLVM IR.
 This is clearly more readable.
 Furthermore, one can see much more clearly what the produced code will be.
 
@@ -171,9 +264,13 @@ Using this the following are equivalent:
 The design of \citetitle{holtz2014quote} is inspired by \citetitle{mainland2007c}, which is also used in the cuda implementation of Accelerate.
 I use \citetitle{gill1995happy} and \citetitle{alex}.
 
+\chapter{Conclusion}
+\section{Related Work}
+
 
 \appendix
 
 \backmatter
+\sloppy
 \printbibliography
 \end{document}
