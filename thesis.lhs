@@ -66,9 +66,9 @@
 \vspace{2cm}
 
 \begin{tabular}{ll}
-angefertigt von: & {\bf Timo von Holtz} \\
+student: & {\bf Timo von Holtz} \\
 \multirow{2}{*}{advised by:} & Priv.-Doz. Dr. Frank Huch\\
- & Assoc. Prof. Dr. Manuel M T Chakravarty
+ & Assoc. Prof. Dr. Manuel M. T. Chakravarty
 \end{tabular}
 
 \vspace{1cm}
@@ -116,7 +116,10 @@ It uses Static Single Assignment (SSA) form.\cite{alpern1988detecting,rosen1988g
 A program is said to be in SSA form if each of its variables is defined exactly once, and each use of a variable is dominated by that variable’s definition.
 SSA form greatly simplifies many dataflow optimizations because only a single definition can reach a particular use of a value, and finding that definition is trivial.
 
-\begin{figure}[htb]
+To get idea of how this looks like in practice, let's look at an example.
+Figure \ref{fig:sumc} shows a simple c function to sum up the elements of an array. The corresponding LLVM code is shown in figure \ref{fig:sumll}.
+
+\begin{figure}[h]
 \begin{verbatim}
 double dotp(double* a, double* b, int length) {
   double x = 0;
@@ -126,9 +129,11 @@ double dotp(double* a, double* b, int length) {
   return x;
 }
 \end{verbatim}
+\caption{sum as a C function}
+\label{fig:sumc}
 \end{figure}
 
-\begin{figure}[htb]
+\begin{figure}[h]
 \begin{verbatim}
 define double @sum(double* %a, i32 %length) {
   %1 = icmp sgt i32 %length, 0
@@ -150,6 +155,8 @@ define double @sum(double* %a, i32 %length) {
   ret double %x.0.lcssa
 }
 \end{verbatim}
+\caption{sum as a LLVM}
+\label{fig:sumll}
 \end{figure}
 
 \section{Accelerate}
