@@ -1,34 +1,39 @@
 \documentclass[a4paper,bibliography=totocnumbered,parskip=half]{scrbook}
 %include polycode.fmt
+\renewcommand{\tt}{\ttfamily} %bug with lhs2tex
 \usepackage{lhs}
 \usepackage[utf8]{inputenc}
-\usepackage[backend=biber,style=alphabetic]{biblatex}
+\usepackage[backend=biber,style=numeric]{biblatex}
 \usepackage[english]{babel}
 \usepackage{csquotes}
 \usepackage{hyperref}
 \usepackage{url}
 \usepackage{scrhack}
 \usepackage{graphicx}
+\usepackage{courier}
 \usepackage[T1]{fontenc}
 \usepackage{amsmath}
 \usepackage[obeyFinal]{todonotes}
 \usepackage{multirow}% http://ctan.org/pkg/multirow
 \usepackage{listings}
 
-\lstset{basicstyle=\footnotesize,
+\lstset{basicstyle=\footnotesize\ttfamily,
         breaklines=true,
         numbers=left,
         numberstyle=\tiny,
-        frame=single}
+        frame=single,
+        language=llvm}
 
 % Kapitelüberschrift in der Kopfzeile
 \usepackage[automark]{scrpage2} % Schickerer Satzspiegel mit KOMA-Script
 \pagestyle{scrheadings}
 \setheadsepline{.5pt}
 
-\clubpenalty10000
-\widowpenalty10000
-
+\widowpenalty=1000
+\clubpenalty=1000
+\DefineBibliographyStrings{english}{%
+  bibliography = {References},
+}
 \bibliography{accelerate}
 
 \newcommand{\executeIffilenewer}[3]{
@@ -42,20 +47,17 @@
  \includegraphics[#1]{#2.pdf}
 }
 
-
-
 \begin{document}
-
 \frontmatter
 
 \pagestyle{empty}
 
 \begin{center}
-{\huge \it Master Thesis}
+{\huge \textit{Master Thesis}}
 
 \vspace{2cm}
 
-{\Large \bf An LLVM Backend for Accelerate}
+{\Large \textbf{An LLVM Backend for Accelerate}}
 
 \vspace{1.75cm}
 
@@ -63,9 +65,9 @@
 
 \vspace{1.75cm}
 
-{\large Programming Languages and Compiler Construction\\
+{\large Christian-Albrechts-Universität zu Kiel\\
    Department of Computer Science\\
-   Christian-Albrechts-University of Kiel
+   Programming Languages and Compiler Construction
 }
 
 \end{center}
@@ -73,7 +75,7 @@
 \vspace{2cm}
 
 \begin{tabular}{ll}
-student: & {\bf Timo von Holtz} \\
+student: & \textbf{Timo von Holtz} \\
 \multirow{2}{*}{advised by:} & Priv.-Doz. Dr. Frank Huch\\
  & Assoc. Prof. Dr. Manuel M. T. Chakravarty
 \end{tabular}
@@ -123,10 +125,10 @@ A program is said to be in SSA form if each of its variables is defined exactly 
 SSA form greatly simplifies many dataflow optimizations because only a single definition can reach a particular use of a value, and finding that definition is trivial.
 
 To get idea of how this looks like in practice, let's look at an example.
-Figure \ref{fig:sumc} shows a simple c function to sum up the elements of an array. The corresponding LLVM code is shown in figure \ref{fig:sumll}.
+Figure \ref{fig:sumc} shows a simple C function to sum up the elements of an array. The corresponding LLVM code is shown in figure \ref{fig:sumll}.
 
-\begin{figure}[h]
-\begin{verbatim}
+\begin{figure}
+\begin{lstlisting}[language=C]
 double dotp(double* a, double* b, int length) {
   double x = 0;
   for (int i=0;i<length;i++) {
@@ -134,14 +136,14 @@ double dotp(double* a, double* b, int length) {
   }
   return x;
 }
-\end{verbatim}
+\end{lstlisting}
 \caption{sum as a C function}
 \label{fig:sumc}
 \end{figure}
 
-\begin{figure}[h]
-\begin{verbatim}
-define double @sum(double* %a, i32 %length) {
+\begin{figure}
+\begin{lstlisting}
+define double @@sum(double* %a, i32 %length) {
   %1 = icmp sgt i32 %length, 0
   br i1 %1, label %.lr.ph, label %._crit_edge
 
@@ -160,17 +162,68 @@ define double @sum(double* %a, i32 %length) {
   %x.0.lcssa = phi double [ 0.000000e+00, %0 ], [ %4, %.lr.ph ]
   ret double %x.0.lcssa
 }
-\end{verbatim}
+\end{lstlisting}
 \caption{sum as a LLVM}
 \label{fig:sumll}
 \end{figure}
 
-\subsection{Optimization}
+The first obvious difference is how the for-loop is translated.
+In LLVM every function is divided into basic blocks.
+A basic block is a continuous stream of instructions (add, mult, call, ...) with a terminator at the end.
+Terminators can either be used to jump to another block (branch) or return to the calling function.
+
+The $\Phi$--nodes in the SSA are represented with \lstinline{phi}-instructions.
+These have to preceed every other instruction in a basic block.
+
+\subsubsection{Types}
+The LLVM type system is one of the most important features of the intermediate representation.
+Being typed enables a number of optimizations to be performed directly, without having to do extra analyses on the side before the transformation.
+
+Important Types are: \todo{description of types}
+\begin{itemize}
+\item \lstinline{void}, which represents no value
+\item integers with specified length N: \lstinline{iN}
+\item floating point numbers: \lstinline{half, float, double, ...}
+\item pointers: \lstinline{<type> *}
+\item function types: \lstinline{<returntype> (<parameter list>)} 
+\item vector types: \lstinline{< <# elements> x <elementtype> >}
+\item array types: \lstinline{[<# elements> x <elementtype>]}
+\item structure types: \lstinline!{ <type list> }!
+\end{itemize}
+
 \subsection{Vectorization}
+Modern CPUs all have SIMD units to execute an instruction on multiple datasets in parallel.
+Usind these units is easy with LLVM.
+All operations (\lstinline{add}, \lstinline{fadd}, \lstinline{sub}, ...) can be used with vector arguments the same way as with scalar arguments.
+
+To manually exploit this can be tricky however.
+LLVM has multiple strategies to fuse similar instructions or tight inner loops into vectorized code.
+
+
+
+\subsubsection{Fast-Math Flags}
+To vectorize code the operations involved need to be associative.
+When working with floating point numbers, this property is violated.
+To vectorize the code regardless, LLVM has the notion of fast-math-flags.
+These tell the optimizer to assume certain properties that aren't true in general.
+
+Available flags are\cite{llvmref}:
+\begin{itemize}
+\item[nnan] No NaNs - Allow optimizations to assume the arguments and result are not NaN. Such optimizations are required to retain defined behavior over NaNs, but the value of the result is undefined.
+\item[ninf] No Infs - Allow optimizations to assume the arguments and result are not +/-Inf. Such optimizations are required to retain defined behavior over +/-Inf, but the value of the result is undefined.
+\item[nsz] No Signed Zeros - Allow optimizations to treat the sign of a zero argument or result as insignificant.
+\item[arcp] Allow Reciprocal - Allow optimizations to use the reciprocal of an argument rather than perform division.
+\item[fast] Fast - Allow algebraically equivalent transformations that may dramatically change results in floating point (e.g. reassociate). This flag implies all the others.
+\end{itemize}
 
 \section{Accelerate}
-
+Similar to Repa\cite{keller2010regular}, uses gang workers.\cite{chakravarty2007data}
 \chapter{Contributions}
+\section{llvm-general}
+\begin{itemize}
+\item Targetmachine (Optimization)
+\item fast-math
+\end{itemize}
 \section{llvm-general-quote}
 When writing a companyiler using LLVM in Haskell there is a good tutorial on how to do it at \citeurl{diehl2014jit}.
 It uses \citetitle{scarlet2013llvm} to interface with LLVM.
@@ -219,9 +272,9 @@ The idea behind quasiquotation is, that you can define a DSL with arbitrary synt
 This is done at compile-time, so you get the same type safety as writing the AST by hand.
 
 \begin{figure}
-\begin{verbatim}
-[llg|
-define i64 @foo(i64 %start, i64 %end) {
+\begin{lstlisting}
+[llg||
+define i64 @@foo(i64 %start, i64 %end) {
   entry:
     br label %for
   
@@ -231,8 +284,8 @@ define i64 @foo(i64 %start, i64 %end) {
         ret i64 %y
     }
 }
-|]
-\end{verbatim}
+||]
+\end{lstlisting}
 \caption{For Loop using \citetitle{holtz2014quote}}
 \label{fig:forquote}
 \end{figure}
@@ -241,8 +294,8 @@ I implemented \citetitle{holtz2014quote}, a quasiquotation library for LLVM.
 Figure \ref{fig:forquote} shows a for loop using my library.
 
 \begin{figure}
-\begin{verbatim}
-define i64 @foo(i64 %start, i64 %end) {
+\begin{lstlisting}
+define i64 @@foo(i64 %start, i64 %end) {
 entry:
   br label %for
 
@@ -260,7 +313,7 @@ for.body:                              ; preds = %for
   %y = add i64 %i, %x
   br label %for
 }
-\end{verbatim}
+\end{lstlisting}
 \caption{Expanded For Loop}
 \label{fig:forquote1}
 \end{figure}
@@ -273,12 +326,55 @@ Another advantage of quasiquotation is antiquotation.
 This means you can still reference arbitrary Haskell variables from within the quotation.
 Using this the following are equivalent:
 \begin{itemize}
-\item @[llinstr| add i64 %x, 1 |]@
-\item @let y = 1 in [llinstr| add i64 %x, $opr:(y) |]@
+\item \lstinline{[llinstr|| add i64 %x, 1 |]}
+\item \lstinline{let y = 1 in [llinstr|| add i64 %x, $opr:(y) |]}
 \end{itemize}
 
 The design of \citetitle{holtz2014quote} is inspired by \citetitle{mainland2007c}, which is also used in the cuda implementation of Accelerate.
 I use \citetitle{gill1995happy} and \citetitle{alex}.
+
+\section{Skeletons}
+\subsection{map}
+\subsection{fold}
+\subsection{scan}
+\cite{ladner1980parallel}
+My plan is the following:
+
+\begin{lstlisting}
+void scan(double* in, double* out, double* tmp, unsigned length, unsigned start, unsigned end, unsigned tid) {
+  double acc = 0;
+  if (end==length) {
+    tmp[0] = 0;
+  } else {
+    for (unsigned i=start;i<end;i++) {
+      acc += in[i];
+    }
+    tmp[tid+1] = acc;
+  }
+  printf("block");
+  acc = tmp[tid];
+  for (unsigned j=start;j<end;j++) {
+    acc += in[j];
+    out[j] = acc;
+  }
+}
+
+void scanAlt(double* in, double* out, unsigned length, unsigned start, unsigned end) {
+  double acc = 0;
+  for (unsigned j=start;j<end;j++) {
+    acc += in[j];
+    out[j] = acc;
+  }
+  printf("block");
+  double add=0;
+  if (start>0) {
+    add = out[start-1];
+  }
+  for (unsigned i=start;i<end;i++) {
+    out[i] += add;
+  }
+}
+\end{lstlisting}
 
 \chapter{Conclusion}
 \section{Related Work}
@@ -381,5 +477,5 @@ attributes #0 = { nounwind readonly }
 
 \backmatter
 \sloppy
-\printbibliography
+\printbibliography[heading=bibintoc]
 \end{document}
