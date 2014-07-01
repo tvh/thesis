@@ -3,7 +3,7 @@
 \renewcommand{\tt}{\ttfamily} %bug with lhs2tex
 \usepackage{lhs}
 \usepackage[utf8]{inputenc}
-\usepackage[backend=biber,style=numeric]{biblatex}
+\usepackage[backend=biber,citestyle=alphabetic,bibstyle=din]{biblatex}
 \usepackage[english]{babel}
 \usepackage{csquotes}
 \usepackage{hyperref}
@@ -31,6 +31,37 @@
 
 \widowpenalty=1000
 \clubpenalty=1000
+% Use cite/entry key as fallback label
+\DeclareLabelalphaTemplate{
+  \labelelement{
+    \field[final]{shorthand}
+    \field{label}
+    \field[strwidth=3,strside=left,ifnames=1]{labelname}
+    \field[strwidth=1,strside=left]{labelname}
+    \field[final,strwidth=3]{citekey}
+  }
+  \labelelement{
+    \field[strwidth=2,strside=right]{year}
+  }
+}
+
+% Add labels to bibliography - taken from alphabetic.bbx
+\DeclareFieldFormat{labelalphawidth}{\mkbibbrackets{#1}}
+\defbibenvironment{bibliography}
+  {\list
+     {\printtext[labelalphawidth]{%
+        \printfield{prefixnumber}%
+        \printfield{labelalpha}%
+        \printfield{extraalpha}}}
+     {\setlength{\labelwidth}{\labelalphawidth}%
+      \setlength{\leftmargin}{\labelwidth}%
+      \setlength{\labelsep}{\biblabelsep}%
+      \addtolength{\leftmargin}{\labelsep}%
+      \setlength{\itemsep}{\bibitemsep}%
+      \setlength{\parsep}{\bibparsep}}%
+      \renewcommand*{\makelabel}[1]{##1\hss}}
+  {\endlist}
+  {\item}
 \DefineBibliographyStrings{english}{%
   bibliography = {References},
 }
@@ -170,11 +201,14 @@ for.end:                                          ; preds = %for.body, %entry
 
 The first obvious difference is how the for-loop is translated.
 In LLVM every function is divided into basic blocks.
-A basic block is a continuous stream of instructions (add, mult, call, \dots) with a terminator at the end.
+A basic block is a continuous stream of instructions with a terminator at the end.
+Instructions are  add, mult, call, \dots, but also call.
 Terminators can either be used to jump to another block (branch) or return to the calling function.
 
-The $\Phi$--nodes in the SSA are represented with \lstinline{phi}-instructions.
-These have to preceed every other instruction in a basic block.
+To allow for dynamic control flow, there are $\Phi$-nodes.
+These specify the the value of a new variable depending on what the last block was.
+The $\Phi$-nodes in the SSA are represented with \lstinline{phi}-instructions.
+In LLVM, these have to preceed every other instruction in a given basic block.
 
 \subsubsection{Types}
 The LLVM type system is one of the most important features of the intermediate representation.
@@ -186,7 +220,7 @@ Important Types are: \todo{description of types}
 \item integers with specified length N: \lstinline{iN}
 \item floating point numbers: \lstinline{half, float, double, ...}
 \item pointers: \lstinline{<type> *}
-\item function types: \lstinline{<returntype> (<parameter list>)} 
+\item function types: \lstinline{<returntype> (<parameter list>)}
 \item vector types: \lstinline{< <# elements> x <elementtype> >}
 \item array types: \lstinline{[<# elements> x <elementtype>]}
 \item structure types: \lstinline!{ <type list> }!
@@ -195,12 +229,24 @@ Important Types are: \todo{description of types}
 \subsection{Vectorization}
 Modern CPUs all have SIMD units to execute an instruction on multiple datasets in parallel.
 Usind these units is easy with LLVM.
-All operations (\lstinline{add}, \lstinline{fadd}, \lstinline{sub}, ...) can be used with vector arguments the same way as with scalar arguments.
+All operations (\lstinline{add}, \lstinline{fadd}, \lstinline{sub}, \dots) can be used with vector arguments the same way as with scalar arguments.
 
 To manually exploit this can be tricky however.
 LLVM has multiple strategies to fuse similar instructions or tight inner loops into vectorized code.
 
+\subsubsection{Loop Vectorizer}
 
+
+\subsubsection{SLP Vectorizer}
+The goal of SLP vectorization (a.k.a. superword-level parallelism) is to combine similar independent instructions into vector instructions. Memory accesses, arithmetic operations, comparison operations, PHI-nodes, can all be vectorized using this technique.
+For example, the following function performs very similar operations on its inputs (a1, b1) and (a2, b2). The basic-block vectorizer may combine these into vector operations.
+
+\begin{lstlisting}[language=C]
+void foo(int a1, int a2, int b1, int b2, int *A) {
+  A[0] = a1*(a1 + b1)/b1 + 50*b1/a1;
+  A[1] = a2*(a2 + b2)/b2 + 50*b2/a2;
+}
+\end{lstlisting}
 
 \subsubsection{Fast-Math Flags}
 To vectorize code the operations involved need to be associative.
@@ -435,7 +481,7 @@ for.end:                                          ; preds = %for.head
 
 \end{lstlisting}
 \caption{Expanded For Loop (SSA)}
-\label{fig:forquoteSSA2}
+\label{fig:forquoteSSA1}
 \end{figure}
 
 \chapter{Implementation}
