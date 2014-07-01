@@ -21,7 +21,7 @@
         breaklines=true,
         numbers=left,
         numberstyle=\tiny,
-        frame=single,
+%        frame=single,
         language=llvm}
 
 % Kapitelüberschrift in der Kopfzeile
@@ -50,7 +50,7 @@
 \begin{document}
 \frontmatter
 
-\pagestyle{empty}
+\begin{titlepage}
 
 \begin{center}
 {\huge \textit{Master Thesis}}
@@ -86,7 +86,7 @@ student: & \textbf{Timo von Holtz} \\
 Kiel, \today
 \end{center}
 
-\cleardoublepage
+\end{titlepage}
 
 \chapter*{Selbstständigkeitserklärung}
 
@@ -129,10 +129,10 @@ Figure \ref{fig:sumc} shows a simple C function to sum up the elements of an arr
 
 \begin{figure}
 \begin{lstlisting}[language=C]
-double dotp(double* a, double* b, int length) {
+double sum(double* a, int length) {
   double x = 0;
   for (int i=0;i<length;i++) {
-    x += a[i]*b[i];
+    x += a[i];
   }
   return x;
 }
@@ -143,23 +143,24 @@ double dotp(double* a, double* b, int length) {
 
 \begin{figure}
 \begin{lstlisting}
-define double @@sum(double* %a, i32 %length) {
-  %1 = icmp sgt i32 %length, 0
-  br i1 %1, label %.lr.ph, label %._crit_edge
+define double @@sum(double*  %a, i32 %length) {
+entry:
+  %cmp4 = icmp sgt i32 %length, 0
+  br i1 %cmp4, label %for.body, label %for.end
 
-.lr.ph:                                           ; preds = %0, %.lr.ph
-  %indvars.iv = phi i64 [ %indvars.iv.next, %.lr.ph ], [ 0, %0 ]
-  %x.01 = phi double [ %4, %.lr.ph ], [ 0.000000e+00, %0 ]
-  %2 = getelementptr double* %a, i64 %indvars.iv
-  %3 = load double* %2
-  %4 = fadd double %x.01, %3
-  %indvars.iv.next = add i64 %indvars.iv, 1
+for.body:                                         ; preds = %entry, %for.body
+  %indvars.iv = phi i64 [ %indvars.iv.next, %for.body ], [ 0, %entry ]
+  %x.05 = phi double [ %add, %for.body ], [ 0.000000e+00, %entry ]
+  %arrayidx = getelementptr inbounds double* %a, i64 %indvars.iv
+  %0 = load double* %arrayidx, align 8
+  %add = fadd double %x.05, %0
+  %indvars.iv.next = add nuw nsw i64 %indvars.iv, 1
   %lftr.wideiv = trunc i64 %indvars.iv.next to i32
   %exitcond = icmp eq i32 %lftr.wideiv, %length
-  br i1 %exitcond, label %._crit_edge, label %.lr.ph
+  br i1 %exitcond, label %for.end, label %for.body
 
-._crit_edge:                                      ; preds = %.lr.ph, %0
-  %x.0.lcssa = phi double [ 0.000000e+00, %0 ], [ %4, %.lr.ph ]
+for.end:                                          ; preds = %for.body, %entry
+  %x.0.lcssa = phi double [ 0.000000e+00, %entry ], [ %add, %for.body ]
   ret double %x.0.lcssa
 }
 \end{lstlisting}
@@ -169,7 +170,7 @@ define double @@sum(double* %a, i32 %length) {
 
 The first obvious difference is how the for-loop is translated.
 In LLVM every function is divided into basic blocks.
-A basic block is a continuous stream of instructions (add, mult, call, ...) with a terminator at the end.
+A basic block is a continuous stream of instructions (add, mult, call, \dots) with a terminator at the end.
 Terminators can either be used to jump to another block (branch) or return to the calling function.
 
 The $\Phi$--nodes in the SSA are represented with \lstinline{phi}-instructions.
@@ -225,9 +226,11 @@ Similar to Repa\cite{keller2010regular}, uses gang workers.\cite{chakravarty2007
 \item fast-math
 \end{itemize}
 \section{llvm-general-quote}
-When writing a companyiler using LLVM in Haskell there is a good tutorial on how to do it at \citeurl{diehl2014jit}.
+When writing a compiler using LLVM in Haskell there is a good tutorial on how to do it at \citeurl{diehl2014jit}.
 It uses \citetitle{scarlet2013llvm} to interface with LLVM.
-The general idea is to use a monadic generator to produce the AST on the fly.
+The Idea followed in this tutorial is to use a monadic generator to produce the AST.
+
+\todo{longer introduction to monadic code generation}
 
 Figure \ref{fig:formonad} shows how to implement a simple for loop using monadic generators.
 \begin{figure}
@@ -263,13 +266,62 @@ for ti start test incr body = do
 \caption{Monadic generation of for loop}
 \label{fig:formonad}
 \end{figure}
-As you can tell this is much boilerplate code.
+Unfortunately, this produces a lot of boilerplate code.
 We have to define the basic blocks manually and add the instructions one by one.
 This has some obvious drawbacks, as the code can get unreadable pretty quickly.
 
-A solution is to use quasiquotation\cite{mainland2007quote} instead.
+Another approach would be to use an EDSL.
+\todo{write about llvm-general-typed}
+
+I propose a third approach using quasiquotation\cite{mainland2007quote}.
 The idea behind quasiquotation is, that you can define a DSL with arbitrary syntax, which you can then directly transform into Haskell data structures.
 This is done at compile-time, so you get the same type safety as writing the AST by hand.
+
+\begin{figure}
+\begin{lstlisting}
+define i32 @@foo(i32 %x) #0 {
+entry:
+  br label %for.cond
+
+for.cond:                                         ; preds = %for.inc, %entry
+  %res.0 = phi i32 [ 0, %entry ], [ %add, %for.inc ]
+  %i.0 = phi i32 [ 0, %entry ], [ %inc, %for.inc ]
+  %cmp = icmp slt i32 %i.0, %x
+  br i1 %cmp, label %for.body, label %for.end
+
+for.body:                                         ; preds = %for.cond
+  %add = add nsw i32 %res.0, %x
+  %inc = add nsw i32 %i.0, 1
+  br label %for.cond
+
+for.end:                                          ; preds = %for.cond
+  ret i32 %res.0
+}
+\end{lstlisting}
+\label{fig:simplequote}
+\end{figure}
+
+Figure \ref{fig:simplequote} shows how to implement a simple function in LLVM using quasiquotation.
+Compared to the other 2 solutions, this has already the advantage of being very close to the produced LLVM IR.
+
+Without the ability to reference Haskell variables, this would be fairly useless in most cases.
+But as quasiquotation allows for antiquotation as well.
+This means you can still reference arbitrary Haskell variables from within the quotation.
+Using this the following are equivalent:
+\begin{itemize}
+ \item \lstinline{[llinstr|| add i64 %x, 1 |]}
+ \item \lstinline{let y = 1 in [llinstr|| add i64 %x, $opr:y |]}
+\end{itemize}
+
+But you still have to specify the $\Phi$-nodes by hand.
+This is fairly straight forward in a simple example, but can get more complicated very quickly.
+
+The real goal is a language that ``feels'' like a high-level language, but can be trivially translated into LLVM.
+This means
+\begin{itemize}
+ \item using LLVM instructions unmodified.
+ \item introduce higher-level control structures like for, while and if-then-else.
+\end{itemize}
 
 \begin{figure}
 \begin{lstlisting}
@@ -277,12 +329,15 @@ This is done at compile-time, so you get the same type safety as writing the AST
 define i64 @@foo(i64 %start, i64 %end) {
   entry:
     br label %for
-  
+
   for:
     for i64 %i in %start to %end with i64 [0,%entry] as %x {
         %y = add i64 %i, %x
         ret i64 %y
     }
+
+  exit:
+    ret i64 %y
 }
 ||]
 \end{lstlisting}
@@ -290,8 +345,11 @@ define i64 @@foo(i64 %start, i64 %end) {
 \label{fig:forquote}
 \end{figure}
 
-I implemented \citetitle{holtz2014quote}, a quasiquotation library for LLVM.
-Figure \ref{fig:forquote} shows a for loop using my library.
+Figure \ref{fig:forquote} shows a for loop using this approach.
+The loop-variable (\%x in this case) is specified explicitly and can be referenced inside and after the for-loop.
+To update the \%x, I overload the return statement to specify which value should be propagated.
+Figure \ref{fig:forquote1} shows the produced LLVM code. \todo{update figure to correct ordering of bbs}
+This is clearly more readable.
 
 \begin{figure}
 \begin{lstlisting}
@@ -318,25 +376,81 @@ for.body:                              ; preds = %for
 \label{fig:forquote1}
 \end{figure}
 
-Figure \ref{fig:forquote1} shows the resulting LLVM IR.
-This is clearly more readable.
-Furthermore, one can see much more clearly what the produced code will be.
+This approach unfortunately only works for some well-defined cases.
+With multiple loop-variables for example, it quickly becomes cluttered.
+On top of this, it relies on some ``magic'' to resolve the translation and legibility suffers.
 
-Another advantage of quasiquotation is antiquotation.
-This means you can still reference arbitrary Haskell variables from within the quotation.
-Using this the following are equivalent:
-\begin{itemize}
-\item \lstinline{[llinstr|| add i64 %x, 1 |]}
-\item \lstinline{let y = 1 in [llinstr|| add i64 %x, $opr:(y) |]}
-\end{itemize}
+The main reason why it is not possible to define a better syntax is that LLVM code has to be in SSA form.
+This means, that
+\begin{enumerate}
+ \item every variable name can only be written to once.
+ \item $\Phi$-nodes are necessary where control flow merges.
+\end{enumerate}
 
+To loosen this restriction, I implemented SSA recovery pass as part of the quasiquoter.
+Figure \ref{fig:forquoteSSA} and \ref{fig:forquoteSSA1} show the quoted and the produced code respectively.
+\footnote{The produced code is after applying the InstCombine optimization as I place more phi-nodes than necessary.}
+
+\begin{figure}
+\begin{lstlisting}
+[llg||
+define i64 @@foo(i64 %start, i64 %end) {
+  entry:
+    %x = i64 0
+
+  for:
+    for i64 %i in %start to %end {
+        %x = add i64 %i, %x
+    }
+
+  exit:
+    ret i64 %x
+}
+||]
+\end{lstlisting}
+\caption{For Loop using \citetitle{holtz2014quote} and SSA}
+\label{fig:forquoteSSA}
+\end{figure}
+
+\begin{figure}
+\begin{lstlisting}
+define i64 @@foo(i64 %start, i64 %end) {
+entry:
+  br label %for.head
+
+for.head:                                         ; preds = %n0, %entry
+  %x.12 = phi i64 [ 0, %entry ], [ %x.6, %n0 ]
+  %i.4 = phi i64 [ %start, %entry ], [ %i.9, %n0 ]
+  %for.cond.3 = icmp slt i64 %i.4, %end
+  br i1 %for.cond.3, label %n0, label %for.end
+
+n0:                                               ; preds = %for.head
+  %x.6 = add i64 %i.4, %x.12
+  %i.9 = add nuw nsw i64 %i.4, 1
+  br label %for.head
+
+for.end:                                          ; preds = %for.head
+  ret i64 %x.12
+}
+
+\end{lstlisting}
+\caption{Expanded For Loop (SSA)}
+\label{fig:forquoteSSA2}
+\end{figure}
+
+\chapter{Implementation}
+\section{Quasiquoter}
 The design of \citetitle{holtz2014quote} is inspired by \citetitle{mainland2007c}, which is also used in the cuda implementation of Accelerate.
 I use \citetitle{gill1995happy} and \citetitle{alex}.
-
-\section{Skeletons}
-\subsection{map}
-\subsection{fold}
-\subsection{scan}
+\section{Extension for-loop}
+\section{SSA}
+The standard method to achieve this is to use stack allocated variables instead of registers.
+The LLVM optimizer then uses the mem2reg pass to transform these into registers, adding the necessary phi-nodes in the process.
+\cite{braun13simple}
+\chapter{Skeletons}
+\section{map}
+\section{fold}
+\section{scan}
 \cite{ladner1980parallel}
 My plan is the following:
 

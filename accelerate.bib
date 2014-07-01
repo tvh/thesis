@@ -11,6 +11,27 @@
                   {https://courses.cs.washington.edu/courses/cse501/04wi/papers/alpern-popl88.pdf}
 }
 
+@inproceedings{braun13simple,
+  title =	 {Simple and Efficient Construction of Static Single
+                  Assignment Form},
+  booktitle =	 {Proceedings of the International Conference on
+                  Compiler Construction},
+  series =	 {Lecture Notes in Computer Science},
+  year =	 2013,
+  author =	 {Matthias Braun and Sebastian Buchwald and Sebastian
+                  Hack and Roland Lei{\ss}a and Christoph Mallon and
+                  Andreas Zwinkau},
+  url =
+                  {http://pp.info.uni-karlsruhe.de/uploads/publikationen/braun13cc.pdf},
+  abstract =	 {Whereas Cytron et al.’s algorithm is an eager
+                  forwards approach, this new approach is lazy and
+                  backwards i.e.  it searches backwards from uses to
+                  find reaching definitions, inserting φ functions at
+                  control flow join points along the way.  Memoization
+                  avoids repeated lookups, on-the-fly optimization
+                  simplifies generated IR. Implemented in LLVM}
+}
+
 @inproceedings{chakravarty2007data,
   title =	 {Data Parallel Haskell: a status report},
   author =	 {Chakravarty, Manuel MT and Leshchinskiy, Roman and
@@ -20,7 +41,9 @@
                   aspects of multicore programming},
   pages =	 {10--18},
   year =	 2007,
-  organization = {ACM}
+  organization = {ACM},
+  url =
+                  {http://www.cse.unsw.edu.au/~chak/papers/data-parallel-haskell.pdf}
 }
 
 @inproceedings{chakravarty2011accelerating,
@@ -81,6 +104,25 @@
   year =	 2013
 }
 
+@article{cytron91efficiently,
+  author =	 {Ron Cytron and Jeanne Ferrante and Barry K. Rosen
+                  and Mark N. Wegman and F. Kenneth Zadeck},
+  title =	 {Efficiently Computing Static Single Assignment Form
+                  and the Control Dependence Graph},
+  journal =	 {ACM Transactions on Programming Languages and
+                  Systems},
+  volume =	 13,
+  number =	 4,
+  month =	 {Oct},
+  publisher =	 {ACM Press},
+  pages =	 {451--490},
+  year =	 1991,
+  abstract =	 {The most important paper in the field. Comprehensive
+                  yet readable. Note there was an earlier version at
+                  POPL 89.},
+  url =		 {http://doi.acm.org/10.1145/115372.115320}
+}
+
 @inproceedings{elliott2004programming,
   author =	 {Elliott, Conal},
   booktitle =	 {{Proceedings of the 2004 ACM SIGPLAN workshop on
@@ -110,7 +152,21 @@
   title =	 {{Haskell vs. Ada vs. C++ vs. awk vs.... an
                   experiment in software prototyping productivity}},
   volume =	 14,
-  year =	 1994
+  year =	 1994,
+  url =
+                  {http://cpsc.yale.edu/sites/default/files/files/tr1049.pdf}
+}
+
+@incollection{jones1998c,
+  title =	 {C--: A portable assembly language},
+  author =	 {Jones, Simon Peyton and Nordin, Thomas and Oliva,
+                  Dino},
+  booktitle =	 {Implementation of Functional Languages},
+  pages =	 {1--19},
+  year =	 1998,
+  publisher =	 {Springer},
+  url =
+                  {http://research.microsoft.com/en-us/um/people/simonpj/Papers/pal.ps.gz}
 }
 
 @online{gadt,
@@ -127,7 +183,9 @@
   pages =	 {3--14},
   title =	 {{Combinators for impure yet hygienic code
                   generation}},
-  year =	 2014
+  year =	 2014,
+  url =
+                  {http://okmij.org/ftp/tagless-final/TaglessStaged/beyond.pdf}
 }
 
 @inproceedings{keller2010regular,
@@ -141,7 +199,8 @@
   number =	 9,
   pages =	 {261--272},
   year =	 2010,
-  organization = {ACM}
+  organization = {ACM},
+  url =		 {http://www.cse.unsw.edu.au/~chak/papers/repa.pdf}
 }
 
 @article{ladner1980parallel,
@@ -152,7 +211,9 @@
   number =	 4,
   pages =	 {831--838},
   year =	 1980,
-  publisher =	 {ACM}
+  publisher =	 {ACM},
+  url =
+                  {https://engr.smu.edu/~seidel/courses/cse8351/papers/LadnerFischer80.pdf}
 }
 
 @mastersthesis{lattner2002llvm,
@@ -173,7 +234,9 @@
   pages =	 {75--86},
   title =	 {{LLVM: A compilation framework for lifelong program
                   analysis \& transformation}},
-  year =	 2004
+  year =	 2004,
+  url =
+                  {http://web3.cs.columbia.edu/~junfeng/reliable-software/papers/llvm.pdf}
 }
 
 @online{diehl2014jit,
@@ -285,7 +348,9 @@
 @article{newtonconverting,
   author =	 {Newton, Ryan R and Holk, Eric and McDonell, Trevor
                   L},
-  title =	 {{Converting Data to Task-Parallelism by Rewrites}}
+  title =	 {{Converting Data to Task-Parallelism by Rewrites}},
+  url =
+                  {http://www.cse.unsw.edu.au/~tmcdonell/papers/acc-multidev-icfp2014-sub.pdf}
 }
 
 @inproceedings{rosen1988global,
