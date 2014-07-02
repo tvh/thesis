@@ -16,6 +16,8 @@
 \usepackage[obeyFinal]{todonotes}
 \usepackage{multirow}% http://ctan.org/pkg/multirow
 \usepackage{listings}
+\usepackage{enumitem}
+\usepackage[section]{placeins}
 
 \lstset{basicstyle=\footnotesize\ttfamily,
         breaklines=true,
@@ -160,8 +162,8 @@ Figure \ref{fig:sumc} shows a simple C function to sum up the elements of an arr
 
 \begin{figure}
 \begin{lstlisting}[language=C]
-double sum(double* a, int length) {
-  double x = 0;
+int sum(int* a, int length) {
+  int x = 0;
   for (int i=0;i<length;i++) {
     x += a[i];
   }
@@ -174,32 +176,32 @@ double sum(double* a, int length) {
 
 \begin{figure}
 \begin{lstlisting}
-define double @@sum(double*  %a, i32 %length) {
+define i32 @@sum(i32* nocapture readonly %a, i32 %length) {
 entry:
   %cmp4 = icmp sgt i32 %length, 0
   br i1 %cmp4, label %for.body, label %for.end
 
 for.body:                                         ; preds = %entry, %for.body
   %indvars.iv = phi i64 [ %indvars.iv.next, %for.body ], [ 0, %entry ]
-  %x.05 = phi double [ %add, %for.body ], [ 0.000000e+00, %entry ]
-  %arrayidx = getelementptr inbounds double* %a, i64 %indvars.iv
-  %0 = load double* %arrayidx, align 8
-  %add = fadd double %x.05, %0
+  %x.05 = phi i32 [ %add, %for.body ], [ 0, %entry ]
+  %arrayidx = getelementptr inbounds i32* %a, i64 %indvars.iv
+  %0 = load i32* %arrayidx, align 4
+  %add = add nsw i32 %0, %x.05
   %indvars.iv.next = add nuw nsw i64 %indvars.iv, 1
   %lftr.wideiv = trunc i64 %indvars.iv.next to i32
   %exitcond = icmp eq i32 %lftr.wideiv, %length
   br i1 %exitcond, label %for.end, label %for.body
 
 for.end:                                          ; preds = %for.body, %entry
-  %x.0.lcssa = phi double [ 0.000000e+00, %entry ], [ %add, %for.body ]
-  ret double %x.0.lcssa
+  %x.0.lcssa = phi i32 [ 0, %entry ], [ %add, %for.body ]
+  ret i32 %x.0.lcssa
 }
 \end{lstlisting}
 \caption{sum as a LLVM}
 \label{fig:sumll}
 \end{figure}
 
-The first obvious difference is how the for-loop is translated.
+The first obvious difference is the lack of sophisticated control structures.
 In LLVM every function is divided into basic blocks.
 A basic block is a continuous stream of instructions with a terminator at the end.
 Instructions are  add, mult, call, \dots, but also call.
@@ -214,16 +216,16 @@ In LLVM, these have to preceed every other instruction in a given basic block.
 The LLVM type system is one of the most important features of the intermediate representation.
 Being typed enables a number of optimizations to be performed directly, without having to do extra analyses on the side before the transformation.
 
-Important Types are: \todo{description of types}
-\begin{itemize}
-\item \lstinline{void}, which represents no value
-\item integers with specified length N: \lstinline{iN}
-\item floating point numbers: \lstinline{half, float, double, ...}
-\item pointers: \lstinline{<type> *}
-\item function types: \lstinline{<returntype> (<parameter list>)}
-\item vector types: \lstinline{< <# elements> x <elementtype> >}
-\item array types: \lstinline{[<# elements> x <elementtype>]}
-\item structure types: \lstinline!{ <type list> }!
+Important Types are:
+\begin{itemize}[noitemsep]
+\item[-] \lstinline{void}, which represents no value
+\item[-] integers with specified length N: \lstinline{iN}
+\item[-] floating point numbers: \lstinline{half, float, double, ...}
+\item[-] pointers: \lstinline{<type> *}
+\item[-] function types: \lstinline{<returntype> (<parameter list>)}
+\item[-] vector types: \lstinline{< <# elements> x <elementtype> >}
+\item[-] array types: \lstinline{[<# elements> x <elementtype>]}
+\item[-] structure types: \lstinline!{ <type list> }!
 \end{itemize}
 
 \subsection{Vectorization}
@@ -232,25 +234,157 @@ Usind these units is easy with LLVM.
 All operations (\lstinline{add}, \lstinline{fadd}, \lstinline{sub}, \dots) can be used with vector arguments the same way as with scalar arguments.
 
 To manually exploit this can be tricky however.
-LLVM has multiple strategies to fuse similar instructions or tight inner loops into vectorized code.
+LLVM has multiple strategies to fuse similar instructions or tight inner loops into vectorized code.\cite{llvmauto}
 
 \subsubsection{Loop Vectorizer}
+The Loop Vectorizer tries to vectorize tight inner loops.
+To get an idea of how these work, lets look at the example from figure \ref{fig:sumc}.
+To build the sum, every element of the array is added to an accumulator.
+Since addition is associative and commutative, the additions can be reordered.
+Given a vector width of 2, the sum of $2*n$ and $2*n+1$ are calculated in parallel and then added together.
+In addition to this, the vectorizer will also unroll the inner loop to make fewer jumps necessary.
+Figure \ref{fig:sumllvec} shows the corresponding llvm code without loop unroll, as this increases code size dramatically.
 
+\begin{figure}
+\begin{lstlisting}
+define i32 @@sum(i32* nocapture readonly %a, i32 %length) #0 {
+entry:
+  %cmp4 = icmp sgt i32 %length, 0
+  br i1 %cmp4, label %for.body.preheader, label %for.end
+
+for.body.preheader:                               ; preds = %entry
+  %0 = add i32 %length, -1
+  %1 = zext i32 %0 to i64
+  %2 = add i64 %1, 1
+  %end.idx = add i64 %1, 1
+  %n.vec = and i64 %2, 8589934590
+  %cmp.zero = icmp eq i64 %n.vec, 0
+  br i1 %cmp.zero, label %middle.block, label %vector.body
+
+vector.body:                                      ; preds = %for.body.preheader, %vector.body
+  %index = phi i64 [ %index.next, %vector.body ], [ 0, %for.body.preheader ]
+  %vec.phi = phi <2 x i32> [ %5, %vector.body ], [ zeroinitializer, %for.body.preheader ]
+  %3 = getelementptr inbounds i32* %a, i64 %index
+  %4 = bitcast i32* %3 to <2 x i32>*
+  %wide.load = load <2 x i32>* %4, align 4
+  %5 = add nsw <2 x i32> %wide.load, %vec.phi
+  %index.next = add i64 %index, 2
+  %6 = icmp eq i64 %index.next, %n.vec
+  br i1 %6, label %middle.block, label %vector.body
+
+middle.block:                                     ; preds = %vector.body, %for.body.preheader
+  %resume.val = phi i64 [ 0, %for.body.preheader ], [ %n.vec, %vector.body ]
+  %rdx.vec.exit.phi = phi <2 x i32> [ zeroinitializer, %for.body.preheader ], [ %5, %vector.body ]
+  %rdx.shuf = shufflevector <2 x i32> %rdx.vec.exit.phi, <2 x i32> undef, <2 x i32> <i32 1, i32 undef>
+  %bin.rdx = add <2 x i32> %rdx.vec.exit.phi, %rdx.shuf
+  %7 = extractelement <2 x i32> %bin.rdx, i32 0
+  %cmp.n = icmp eq i64 %end.idx, %resume.val
+  br i1 %cmp.n, label %for.end, label %for.body
+
+for.body:                                         ; preds = %middle.block, %for.body
+  %indvars.iv = phi i64 [ %indvars.iv.next, %for.body ], [ %resume.val, %middle.block ]
+  %x.05 = phi i32 [ %add, %for.body ], [ %7, %middle.block ]
+  %arrayidx = getelementptr inbounds i32* %a, i64 %indvars.iv
+  %8 = load i32* %arrayidx, align 4
+  %add = add nsw i32 %8, %x.05
+  %indvars.iv.next = add nuw nsw i64 %indvars.iv, 1
+  %lftr.wideiv = trunc i64 %indvars.iv.next to i32
+  %exitcond = icmp eq i32 %lftr.wideiv, %length
+  br i1 %exitcond, label %for.end, label %for.body
+
+for.end:                                          ; preds = %for.body, %middle.block, %entry
+  %x.0.lcssa = phi i32 [ 0, %entry ], [ %add, %for.body ], [ %7, %middle.block ]
+  ret i32 %x.0.lcssa
+}
+\end{lstlisting}
+\caption{Vectorized Sum}
+\label{fig:sumllvec}
+\end{figure}
+
+Apart from reductions, LLVM can also vectorize the following:
+\begin{itemize}[noitemsep]
+ \item[-] Loops with unknown trip count
+ \item[-] Runtime Checks of Pointers
+ \item[-] Reductions
+ \item[-] Inductions
+ \item[-] If Conversion
+ \item[-] Pointer Induction Variables
+ \item[-] Reverse Iterators
+ \item[-] Scatter / Gather
+ \item[-] Vectorization of Mixed Types
+ \item[-] Global Structures Alias Analysis
+ \item[-] Vectorization of function calls
+ \item[-] Partial unrolling during vectorization
+\end{itemize}
+A detailed description can be found at \citeurl{llvmauto}
 
 \subsubsection{SLP Vectorizer}
-The goal of SLP vectorization (a.k.a. superword-level parallelism) is to combine similar independent instructions into vector instructions. Memory accesses, arithmetic operations, comparison operations, PHI-nodes, can all be vectorized using this technique.
-For example, the following function performs very similar operations on its inputs (a1, b1) and (a2, b2). The basic-block vectorizer may combine these into vector operations.
+The goal of SLP vectorization (a.k.a. superword-level parallelism) is to combine similar independent instructions into vector instructions.
+Memory accesses, arithmetic operations, comparison operations, PHI-nodes, can all be vectorized using this technique.
+For example, the following function performs very similar operations on its inputs (a1, b1) and (a2, b2).
 
 \begin{lstlisting}[language=C]
-void foo(int a1, int a2, int b1, int b2, int *A) {
+void foo(double a1, double a2, double b1, double b2, double *A) {
   A[0] = a1*(a1 + b1)/b1 + 50*b1/a1;
   A[1] = a2*(a2 + b2)/b2 + 50*b2/a2;
 }
 \end{lstlisting}
 
+The SLP vectorizer may combine these into vector operations.
+Figures \ref{fig:slpll1} and \ref{fig:slpll2} show the the corresponding LLVM before and after SLP vectorization.
+
+\begin{figure}
+\begin{lstlisting}
+define void @@foo(double %a1, double %a2, double %b1, double %b2, double* %A) {
+entry:
+  %add = fadd double %a1, %b1
+  %mul = fmul double %add, %a1
+  %div = fdiv double %mul, %b1
+  %mul1 = fmul double %b1, 5.000000e+01
+  %div2 = fdiv double %mul1, %a1
+  %add3 = fadd double %div, %div2
+  store double %add3, double* %A, align 8
+  %add4 = fadd double %a2, %b2
+  %mul5 = fmul double %add4, %a2
+  %div6 = fdiv double %mul5, %b2
+  %mul7 = fmul double %b2, 5.000000e+01
+  %div8 = fdiv double %mul7, %a2
+  %add9 = fadd double %div6, %div8
+  %arrayidx10 = getelementptr inbounds double* %A, i64 1
+  store double %add9, double* %arrayidx10, align 8
+  ret void
+}
+\end{lstlisting}
+\caption{Vectorized Sum}
+\label{fig:slpll1}
+\end{figure}
+
+\begin{figure}
+\begin{lstlisting}
+define void @@foo(double %a1, double %a2, double %b1, double %b2, double* %A) {
+entry:
+  %0 = insertelement <2 x double> undef, double %a1, i32 0
+  %1 = insertelement <2 x double> %0, double %a2, i32 1
+  %2 = insertelement <2 x double> undef, double %b1, i32 0
+  %3 = insertelement <2 x double> %2, double %b2, i32 1
+  %4 = fadd <2 x double> %1, %3
+  %5 = fmul <2 x double> %4, %1
+  %6 = fdiv <2 x double> %5, %3
+  %7 = fmul <2 x double> %3, <double 5.000000e+01, double 5.000000e+01>
+  %8 = fdiv <2 x double> %7, %1
+  %9 = fadd <2 x double> %6, %8
+  %10 = bitcast double* %A to <2 x double>*
+  store <2 x double> %9, <2 x double>* %10, align 8
+  ret void
+}
+\end{lstlisting}
+\caption{Vectorized Sum}
+\label{fig:slpll2}
+\end{figure}
+
 \subsubsection{Fast-Math Flags}
-To vectorize code the operations involved need to be associative.
-When working with floating point numbers, this property is violated.
+In order for the Loop vectorizer to work, the operations involved need to be associative.
+When dealing with floating point numbers, the basic operations like \lstinline{fadd} and \lstinline{fmul} don't satisfy this condition.
 To vectorize the code regardless, LLVM has the notion of fast-math-flags.
 These tell the optimizer to assume certain properties that aren't true in general.
 
@@ -263,9 +397,26 @@ Available flags are\cite{llvmref}:
 \item[fast] Fast - Allow algebraically equivalent transformations that may dramatically change results in floating point (e.g. reassociate). This flag implies all the others.
 \end{itemize}
 
+\subsection{llvm-general}
+There are multiple bindings to LLVM in Haskell.
+The most complete is llvm-general.\cite{scarlet2013llvm}
+Instead of exposing the LLVM API directly, it uses an ADT to represent LLVM IR.
+This can then be translated into the corresponding C++ object.
+It also supports the other way, transforming the object back into the ADT.
+
+Using an ADT instead of writing directly to the C++ object has many advantages.
+This way, the code can be produced and manipulated outside the IO context.
+It is also much easier to reason about within Haskell.
+
 \section{Accelerate}
 Similar to Repa\cite{keller2010regular}, uses gang workers.\cite{chakravarty2007data}
+\todo{write about Accelerate}
+
 \chapter{Contributions}
+\section{accelerate}
+\begin{itemize}
+\item StorableArray (errors in caching)
+\end{itemize}
 \section{llvm-general}
 \begin{itemize}
 \item Targetmachine (Optimization)
@@ -312,6 +463,7 @@ for ti start test incr body = do
 \caption{Monadic generation of for loop}
 \label{fig:formonad}
 \end{figure}
+
 Unfortunately, this produces a lot of boilerplate code.
 We have to define the basic blocks manually and add the instructions one by one.
 This has some obvious drawbacks, as the code can get unreadable pretty quickly.
@@ -351,7 +503,7 @@ Figure \ref{fig:simplequote} shows how to implement a simple function in LLVM us
 Compared to the other 2 solutions, this has already the advantage of being very close to the produced LLVM IR.
 
 Without the ability to reference Haskell variables, this would be fairly useless in most cases.
-But as quasiquotation allows for antiquotation as well.
+But quasiquotation allows for antiquotation as well.
 This means you can still reference arbitrary Haskell variables from within the quotation.
 Using this the following are equivalent:
 \begin{itemize}
@@ -359,7 +511,8 @@ Using this the following are equivalent:
  \item \lstinline{let y = 1 in [llinstr|| add i64 %x, $opr:y |]}
 \end{itemize}
 
-But you still have to specify the $\Phi$-nodes by hand.
+\subsection{control-structures}
+You still have to specify the $\Phi$-nodes by hand.
 This is fairly straight forward in a simple example, but can get more complicated very quickly.
 
 The real goal is a language that ``feels'' like a high-level language, but can be trivially translated into LLVM.
@@ -394,7 +547,8 @@ define i64 @@foo(i64 %start, i64 %end) {
 Figure \ref{fig:forquote} shows a for loop using this approach.
 The loop-variable (\%x in this case) is specified explicitly and can be referenced inside and after the for-loop.
 To update the \%x, I overload the return statement to specify which value should be propagated.
-Figure \ref{fig:forquote1} shows the produced LLVM code. \todo{update figure to correct ordering of bbs}
+At the end of the for-loop the code automatically jumps to the next block.
+Figure \ref{fig:forquote1} shows the produced LLVM code.
 This is clearly more readable.
 
 \begin{figure}
@@ -410,19 +564,20 @@ for:                                   ; preds = %for.body, %entry
   %i.new = add nuw nsw i64 %i, 1
   br i1 %for.cond, label %for.body, label %for.end
 
-for.end:                               ; preds = %for
-  ret i64 %x
-
 for.body:                              ; preds = %for
   %y = add i64 %i, %x
   br label %for
+
+for.end:                               ; preds = %for
+  ret i64 %x
 }
 \end{lstlisting}
 \caption{Expanded For Loop}
 \label{fig:forquote1}
 \end{figure}
 
-This approach unfortunately only works for some well-defined cases.
+\subsection{SSA}
+The above approach unfortunately only works for some well-defined cases.
 With multiple loop-variables for example, it quickly becomes cluttered.
 On top of this, it relies on some ``magic'' to resolve the translation and legibility suffers.
 
@@ -434,8 +589,10 @@ This means, that
 \end{enumerate}
 
 To loosen this restriction, I implemented SSA recovery pass as part of the quasiquoter.
-Figure \ref{fig:forquoteSSA} and \ref{fig:forquoteSSA1} show the quoted and the produced code respectively.
-\footnote{The produced code is after applying the InstCombine optimization as I place more phi-nodes than necessary.}
+This means that I can now reassign variables inside the LLVM code.
+Using this, I was able to define a much more simple syntax for the \lstinline{for}-loop.
+The placement of $\Phi$-nodes is not optimal, but redundant ones can be easily remove by LLVM's InstCombine pass.
+Figure \ref{fig:forquoteSSA} and \ref{fig:forquoteSSA1} show the quoted and the produced code after InstCombine respectively.
 
 \begin{figure}
 \begin{lstlisting}
@@ -478,11 +635,20 @@ n0:                                               ; preds = %for.head
 for.end:                                          ; preds = %for.head
   ret i64 %x.12
 }
-
 \end{lstlisting}
 \caption{Expanded For Loop (SSA)}
 \label{fig:forquoteSSA1}
 \end{figure}
+
+\subsection{syntax extensions}
+llvm-general-quote supports all llvm instructions.
+I added the following to the syntax:
+\begin{itemize}
+ \item direct assignment: \lstinline!<var> = <ty> <val>!
+ \item if: \lstinline!if <cond> { <instructions> } [ else { <instructions> } ]!
+ \item while: \lstinline!while <cond> { <instructions> }!
+ \item for: \lstinline!for <ty> <var> in <val1> ( to || downto ) <val2> { <instructions> }!
+\end{itemize}
 
 \chapter{Implementation}
 \section{Quasiquoter}
@@ -535,6 +701,7 @@ void scanAlt(double* in, double* out, unsigned length, unsigned start, unsigned 
   }
 }
 \end{lstlisting}
+\section{stencil}
 
 \chapter{Conclusion}
 \section{Related Work}
@@ -542,98 +709,6 @@ void scanAlt(double* in, double* out, unsigned length, unsigned start, unsigned 
 
 \appendix
 \chapter{Listings}
-\begin{lstlisting}[language=llvm]
-; Function Attrs: nounwind readonly
-define double @@sum(double* nocapture readonly %a, i32 %length) #0 {
-  %1 = icmp sgt i32 %length, 0
-  br i1 %1, label %.lr.ph.preheader, label %._crit_edge
-
-.lr.ph.preheader:                                 ; preds = %0
-  %2 = add i32 %length, -1
-  %3 = zext i32 %2 to i64
-  %4 = add i64 %3, 1
-  %end.idx = add i64 %3, 1
-  %n.vec = and i64 %4, 8589934576
-  %cmp.zero = icmp eq i64 %n.vec, 0
-  br i1 %cmp.zero, label %middle.block, label %vector.body
-
-vector.body:                                      ; preds = %.lr.ph.preheader, %vector.body
-  %index = phi i64 [ %index.next, %vector.body ], [ 0, %.lr.ph.preheader ]
-  %vec.phi = phi <4 x double> [ %13, %vector.body ],
-                              [ zeroinitializer, %.lr.ph.preheader ]
-  %vec.phi6 = phi <4 x double> [ %14, %vector.body ],
-                               [ zeroinitializer, %.lr.ph.preheader ]
-  %vec.phi7 = phi <4 x double> [ %15, %vector.body ],
-                               [ zeroinitializer, %.lr.ph.preheader ]
-  %vec.phi8 = phi <4 x double> [ %16, %vector.body ],
-                               [ zeroinitializer, %.lr.ph.preheader ]
-  %5 = getelementptr double* %a, i64 %index
-  %6 = bitcast double* %5 to <4 x double>*
-  %wide.load = load <4 x double>* %6, align 8
-  %.sum22 = or i64 %index, 4
-  %7 = getelementptr double* %a, i64 %.sum22
-  %8 = bitcast double* %7 to <4 x double>*
-  %wide.load9 = load <4 x double>* %8, align 8
-  %.sum23 = or i64 %index, 8
-  %9 = getelementptr double* %a, i64 %.sum23
-  %10 = bitcast double* %9 to <4 x double>*
-  %wide.load10 = load <4 x double>* %10, align 8
-  %.sum24 = or i64 %index, 12
-  %11 = getelementptr double* %a, i64 %.sum24
-  %12 = bitcast double* %11 to <4 x double>*
-  %wide.load11 = load <4 x double>* %12, align 8
-  %13 = fadd <4 x double> %vec.phi, %wide.load
-  %14 = fadd <4 x double> %vec.phi6, %wide.load9
-  %15 = fadd <4 x double> %vec.phi7, %wide.load10
-  %16 = fadd <4 x double> %vec.phi8, %wide.load11
-  %index.next = add i64 %index, 16
-  %17 = icmp eq i64 %index.next, %n.vec
-  br i1 %17, label %middle.block, label %vector.body, !llvm.loop !0
-
-middle.block:                                     ; preds = %vector.body, %.lr.ph.preheader
-  %resume.val = phi i64 [ 0, %.lr.ph.preheader ], [ %n.vec, %vector.body ]
-  %rdx.vec.exit.phi = phi <4 x double> [ zeroinitializer, %.lr.ph.preheader ],
-                                       [ %13, %vector.body ]
-  %rdx.vec.exit.phi14 = phi <4 x double> [ zeroinitializer, %.lr.ph.preheader ],
-                                         [ %14, %vector.body ]
-  %rdx.vec.exit.phi15 = phi <4 x double> [ zeroinitializer, %.lr.ph.preheader ],
-                                         [ %15, %vector.body ]
-  %rdx.vec.exit.phi16 = phi <4 x double> [ zeroinitializer, %.lr.ph.preheader ],
-                                         [ %16, %vector.body ]
-  %bin.rdx = fadd <4 x double> %rdx.vec.exit.phi14, %rdx.vec.exit.phi
-  %bin.rdx17 = fadd <4 x double> %rdx.vec.exit.phi15, %bin.rdx
-  %bin.rdx18 = fadd <4 x double> %rdx.vec.exit.phi16, %bin.rdx17
-  %rdx.shuf = shufflevector <4 x double> %bin.rdx18, <4 x double> undef, <4 x i32> <i32 2, i32 3, i32 undef, i32 undef>
-  %bin.rdx19 = fadd <4 x double> %bin.rdx18, %rdx.shuf
-  %rdx.shuf20 = shufflevector <4 x double> %bin.rdx19, <4 x double> undef, <4 x i32> <i32 1, i32 undef, i32 undef, i32 undef>
-  %bin.rdx21 = fadd <4 x double> %bin.rdx19, %rdx.shuf20
-  %18 = extractelement <4 x double> %bin.rdx21, i32 0
-  %cmp.n = icmp eq i64 %end.idx, %resume.val
-  br i1 %cmp.n, label %._crit_edge, label %.lr.ph
-
-.lr.ph:                                           ; preds = %middle.block, %.lr.ph
-  %indvars.iv = phi i64 [ %indvars.iv.next, %.lr.ph ], [ %resume.val, %middle.block ]
-  %x.01 = phi double [ %21, %.lr.ph ], [ %18, %middle.block ]
-  %19 = getelementptr double* %a, i64 %indvars.iv
-  %20 = load double* %19, align 8
-  %21 = fadd fast double %x.01, %20
-  %indvars.iv.next = add i64 %indvars.iv, 1
-  %lftr.wideiv1 = trunc i64 %indvars.iv.next to i32
-  %exitcond2 = icmp eq i32 %lftr.wideiv1, %length
-  br i1 %exitcond2, label %._crit_edge, label %.lr.ph, !llvm.loop !3
-
-._crit_edge:                                      ; preds = %.lr.ph, %middle.block, %0
-  %x.0.lcssa = phi double [ 0.000000e+00, %0 ], [ %21, %.lr.ph ], [ %18, %middle.block ]
-  ret double %x.0.lcssa
-}
-
-attributes #0 = { nounwind readonly }
-
-!0 = metadata !{metadata !0, metadata !1, metadata !2}
-!1 = metadata !{metadata !"llvm.vectorizer.width", i32 1}
-!2 = metadata !{metadata !"llvm.vectorizer.unroll", i32 1}
-!3 = metadata !{metadata !3, metadata !1, metadata !2}
-\end{lstlisting}
 
 \backmatter
 \sloppy
