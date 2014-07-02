@@ -1,5 +1,7 @@
 \documentclass[a4paper,bibliography=totocnumbered,parskip=half]{scrbook}
 %include polycode.fmt
+%include greek.fmt
+%include forall.fmt
 \renewcommand{\tt}{\ttfamily} %bug with lhs2tex
 \usepackage{lhs}
 \usepackage[utf8]{inputenc}
@@ -409,17 +411,20 @@ This way, the code can be produced and manipulated outside the IO context.
 It is also much easier to reason about within Haskell.
 
 \section{Accelerate}
-Accelerate is an an embedded array language for computations for high-performance computing in Haskell.
+Accelerate\cite{chakravarty2011accelerating,mcdonelloptimising} is an an embedded array language for computations for high-performance computing in Haskell.
 Computations on multi-dimensional, regular arrays are expressed in the form of parameterised collective operations, such as maps, reductions, and permutations.
-It is very similar to Repa\cite{keller2010regular} in the way its used.
+It is very similar to Repa\cite{keller2010regular} in the way computations are specified.
+The difference is in the way the computation gets evaluated.
+While Repa produces its result immediately, Accelerate collects the computation which can then be executed.
+This approach is necessaray, as Accelerate isn't limited to be run on a CPU.
+The main back-end of accelerate is in fact based on CUDA.
 
 To give an example of how to use Accelerate, lets look at the dot product of 2 vectors.
 This could easily implemented in Haskell like this.
 
 \begin{code}
 dotp_list :: [Float] -> [Float] -> Float
-dotp_list xs ys =
-  foldl (+) 0 (zipWith (*) xs ys)
+dotp_list xs ys = foldl (+) 0 (zipWith (*) xs ys)
 \end{code}
 
 You can write nearly exactly the same function in Accelerate:
@@ -435,30 +440,74 @@ The first is the difference is the use of a different datastructure.
 A |Vector| is an |Array| with one dimension.
 Similarly, a |Scalar| is an |Array| with 0 dimensions.
 These are then wrapped in the |Acc| type.
-|Acc a| is a computation, that yields an a.
+|Acc a| is a computation, that yields an |a|.
 
 The second difference is the |fold|.
 Unlike the |foldl| in the Haskell example, this |fold| doesn't specify the order of operations.
 This is important as it allows for an efficient implementation.
 In order of this to work, the operation passed to |fold| has to be associative.
 
+If we want to call this function, we have to somehow produce values of type |Acc (Vector Float)|.
+
+First the list is converted with |fromList|.
+To see what it does, lets first look at its type.
+
+\begin{code}
+fromList :: (Elt e, Shape sh) => sh -> [e] -> Array sh e
+\end{code}
+
+In addition to the list of elements, |fromList| takes the shape of the resulting |Array|.
+Shapes can have an arbitrary amount of dimensions, but in this case it is only one.
+To construct a shape, there are 2 datatypes:
+
+\begin{code}
+data Z = Z
+data tail :. head = tail :. head
+\end{code}
+
+The head in this case represents the innermost dimension.
+The tail has to also be a shape.
+
+With this, we get
+\begin{code}
+type DIM0 = Z
+type DIM1 = DIM0 :. Int
+type DIM2 = DIM1 :. Int
+...
+\end{code}
+and
+\begin{code}
+type Scalar a = Array DIM0 a
+type Vector a = Array DIM1 a
+\end{code}
+
+To lift the Arrays we get via |fromList| we use the function
+\begin{code}
+use :: Arrays arrays => arrays -> Acc arrays
+\end{code}
+
+This is all we need to call |dotp|.
 
 \begin{code}
 dotp' :: [Float] -> [Float] -> Acc (Scalar Float)
 dotp' xs ys =
-  let xs' = use (fromList (Z :.length xs) xs)
-      ys' = use (fromList (Z :.length xs) ys)
+  let  xs' = use (fromList (Z :.length xs) xs)
+       ys' = use (fromList (Z :.length xs) ys)
   in dotp xs' ys'
 \end{code}
 
+But we still only have the computation.
+To get the result out of the computation, we have to |run| it.
+After that we can convert the |Array| back to a list and extract the element.
+
 \begin{code}
 dotp_list1 :: [Float] -> [Float] -> Float
-dotp_list1 xs ys = run (dotp' xs ys)
+dotp_list1 xs ys = head . toList $ run $ (dotp' xs ys)
 \end{code}
 
 \subsection{LLVM Backend}
-Similar to Repa\cite{keller2010regular}, uses gang workers.\cite{chakravarty2007data}
-\todo{write about Accelerate}
+\cite{trevor2014llvm}
+uses gang workers.\cite{chakravarty2007data}
 
 \chapter{Contributions}
 \section{accelerate}
@@ -559,7 +608,7 @@ Using this the following are equivalent:
  \item \lstinline{let y = 1 in [llinstr|| add i64 %x, $opr:y |]}
 \end{itemize}
 
-\subsection{control-structures}
+\subsection{Control Structures}
 You still have to specify the $\Phi$-nodes by hand.
 This is fairly straight forward in a simple example, but can get more complicated very quickly.
 
@@ -704,9 +753,17 @@ The design of \citetitle{holtz2014quote} is inspired by \citetitle{mainland2007c
 I use \citetitle{gill1995happy} and \citetitle{alex}.
 \section{Extension for-loop}
 \section{SSA}
-The standard method to achieve this is to use stack allocated variables instead of registers.
+The standard method of producing SSA form in LLVM is to use stack allocated variables instead of registers to store values.
 The LLVM optimizer then uses the mem2reg pass to transform these into registers, adding the necessary phi-nodes in the process.
-\cite{braun13simple}
+
+Since one of the goals of the quasiquoter was to produce llvm-code that is as close to what the programmer wrote as possible, I decided against this approach.
+Instead I do the transformation myself.
+There are a multitude of algorithms to construct LLVM.
+The one most widely used (including in LLVM) is \citeauthor{cytron91efficiently}'s arlgorithm.
+It is however is rather involved as it relies on dominance frontiers.
+An easier approach was presented by \citeauthor{braun13simple}.
+\todo{write about implementation of SSA transformation}
+
 \chapter{Skeletons}
 \section{map}
 \section{fold}
