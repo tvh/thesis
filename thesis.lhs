@@ -409,6 +409,54 @@ This way, the code can be produced and manipulated outside the IO context.
 It is also much easier to reason about within Haskell.
 
 \section{Accelerate}
+Accelerate is an an embedded array language for computations for high-performance computing in Haskell.
+Computations on multi-dimensional, regular arrays are expressed in the form of parameterised collective operations, such as maps, reductions, and permutations.
+It is very similar to Repa\cite{keller2010regular} in the way its used.
+
+To give an example of how to use Accelerate, lets look at the dot product of 2 vectors.
+This could easily implemented in Haskell like this.
+
+\begin{code}
+dotp_list :: [Float] -> [Float] -> Float
+dotp_list xs ys =
+  foldl (+) 0 (zipWith (*) xs ys)
+\end{code}
+
+You can write nearly exactly the same function in Accelerate:
+
+\begin{code}
+dotp :: Acc (Vector Float)
+     -> Acc (Vector Float)
+     -> Acc (Scalar Float)
+dotp xs ys = fold (+) 0 (zipWith (*) xs ys)
+\end{code}
+
+The first is the difference is the use of a different datastructure.
+A |Vector| is an |Array| with one dimension.
+Similarly, a |Scalar| is an |Array| with 0 dimensions.
+These are then wrapped in the |Acc| type.
+|Acc a| is a computation, that yields an a.
+
+The second difference is the |fold|.
+Unlike the |foldl| in the Haskell example, this |fold| doesn't specify the order of operations.
+This is important as it allows for an efficient implementation.
+In order of this to work, the operation passed to |fold| has to be associative.
+
+
+\begin{code}
+dotp' :: [Float] -> [Float] -> Acc (Scalar Float)
+dotp' xs ys =
+  let xs' = use (fromList (Z :.length xs) xs)
+      ys' = use (fromList (Z :.length xs) ys)
+  in dotp xs' ys'
+\end{code}
+
+\begin{code}
+dotp_list1 :: [Float] -> [Float] -> Float
+dotp_list1 xs ys = run (dotp' xs ys)
+\end{code}
+
+\subsection{LLVM Backend}
 Similar to Repa\cite{keller2010regular}, uses gang workers.\cite{chakravarty2007data}
 \todo{write about Accelerate}
 
