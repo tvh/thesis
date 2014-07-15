@@ -25,6 +25,7 @@
         breaklines=true,
         numbers=left,
         numberstyle=\tiny,
+        xleftmargin=.07\textwidth,
 %        frame=single,
         language=llvm}
 
@@ -133,9 +134,20 @@ Verwendung der angegebenen Literatur und Hilfsmittel angefertigt habe.
 \begin{flushright}
 \rule{6cm}{0.4pt} \\
 Timo von Holtz
-\end{flushright} 
+\end{flushright}
 \clearpage
 % oder auch manuell
+
+\chapter*{Abstract}
+Implementing parallel computations is traditionally done in C or FORTRAN.
+This allows great control over the details of execution.
+Unfortunately, this also comes with the complexities of using a low-level language.
+To make this easier, \citeauthor{chakravarty2011accelerating} have developed Accelerate, an embedded array language for computations for high-performance computing in Haskell.
+The main execution target of this EDSL is GPUs via CUDA.
+
+\citeauthor{trevor2014llvm} started working on an alternative implementation using LLVM.
+I contribute to this work by implementing a different approach to code-generation for LLVM using quasi-quotation.
+I use this quasi-quoter to implement the skeletons in the LLVM backend.
 
 % Verzeichnisse
 \listoftodos
@@ -145,7 +157,7 @@ Timo von Holtz
 \mainmatter
 
 \chapter{Introduction}
-\todo{Write Introduction}
+
 
 \chapter{Technologies}
 \section{LLVM}
@@ -248,7 +260,7 @@ In addition to this, the vectorizer will also unroll the inner loop to make fewe
 Figure \ref{fig:sumllvec} shows the corresponding llvm code without loop unroll, as this increases code size dramatically.
 
 \begin{figure}
-\begin{lstlisting}
+\begin{lstlisting}[basicstyle=\scriptsize\ttfamily, xleftmargin=0pt]
 define i32 @@sum(i32* nocapture readonly %a, i32 %length) #0 {
 entry:
   %cmp4 = icmp sgt i32 %length, 0
@@ -357,7 +369,7 @@ entry:
   ret void
 }
 \end{lstlisting}
-\caption{Vectorized Sum}
+\caption{\lstinline{foo} without SLP vectorization}
 \label{fig:slpll1}
 \end{figure}
 
@@ -380,7 +392,7 @@ entry:
   ret void
 }
 \end{lstlisting}
-\caption{Vectorized Sum}
+\caption{\lstinline{foo} with SLP vectorization}
 \label{fig:slpll2}
 \end{figure}
 
@@ -410,6 +422,15 @@ Using an ADT instead of writing directly to the C++ object has many advantages.
 This way, the code can be produced and manipulated outside the IO context.
 It is also much easier to reason about within Haskell.
 
+llvm-general also supports optimization and jit-compilation.
+The optimization is controlled by a |PassSetSpec|
+This offers the user 2 different options: |CuratedPassSetSpec| and |PassSetSpec|.
+Using |CuratedPassSetSpec| is the easier option of the 2.
+It offers a similar level of control as specifying @-On@ at the command line.
+Using |PassSetSpec| gives much more control over the exact passes run, but you have to specify them one by one.
+Both of these specs also come with fields to specify information about the target.
+
+
 \section{Accelerate}
 Accelerate\cite{chakravarty2011accelerating,mcdonelloptimising} is an an embedded array language for computations for high-performance computing in Haskell.
 Computations on multi-dimensional, regular arrays are expressed in the form of parameterised collective operations, such as maps, reductions, and permutations.
@@ -419,6 +440,7 @@ While Repa produces its result immediately, Accelerate collects the computation 
 This approach is necessaray, as Accelerate isn't limited to be run on a CPU.
 The main back-end of accelerate is in fact based on CUDA.
 
+\subsection{Usage}
 To give an example of how to use Accelerate, lets look at the dot product of 2 vectors.
 This could easily implemented in Haskell like this.
 
@@ -505,16 +527,102 @@ dotp_list1 :: [Float] -> [Float] -> Float
 dotp_list1 xs ys = head . toList $ run $ (dotp' xs ys)
 \end{code}
 
+\subsection{Representation}
+Accelerate represents its arrays internally as regular unboxed one-dimensional arrays.
+In addition to this, the lengths of each dimension is stored.
+In case of a matrix, this would be height and width.
+
+Rather than just simple types like |Int| or |Float|, Accelerate also supports tuples as elements
+These cannot be easily stored in an unboxed array.
+Instead, arrays of tuples are stored as tuples of arrays.
+
+\begin{code}
+Vector (Int, Float) ~ (Vector Int, Vector Float)
+\end{code}
+
+\subsection{Skeletons}
+To execute any computation on a given architecture, the involved functions like |fold| or |map| have to be implemented.
+This is easy if the target is Haskell.
+The reason however that it is easy is the fact, that Haskell has support for higher-level functions like |fold| and |map|.
+In C, this can be emulated by using function pointers.
+This approach however is not very performant if the function is relatively simple as it involves multiple jumps and the manipulation of the call stack.
+
+Accelerate uses skeletons instead.
+The idea is to write the function as you would normally, but leave blanks for the concrete types and passed function.
+When needed it can then be instantiated with the correct types and function.
+Figure \ref{fig:mapskelC} illustrates the idea using |map|.
+
+\begin{figure}
+\begin{lstlisting}[language=C]
+void map
+(
+  TyOut *           d_out,
+  const TyIn *      d_in,
+  const int         length
+){
+  for (int i=0; i < length; ix += 1) {
+    d_out[i] = apply(d_in[i]);
+  }
+}
+\end{lstlisting}
+\caption{|map| Skeleton in C}
+\label{fig:mapskelC}
+\end{figure}
+
+Instead of the single array for input and output however, there will often be multiple.
+This is because a singe array in Accelerate be represented by multiple arrays internally.
+
+\subsection{Fusion}
+Consider the following example from earlier.
+
+\begin{code}
+dotp xs ys = fold (+) 0 (zipWith (*) xs ys)
+\end{code}
+
+This can be rewritten as
+
+\begin{code}
+dotp xs ys =
+  let zs = zipWith (*) xs ys
+  in fold (+) 0 zs
+\end{code}
+
+First, the elements of the 2 arrays are combined pair-wise using |zipWith| and stored in a temporary array.
+As a second step, these elements are then combined into a |Scalar| using |fold|.
+Although this works perfectly well, it produces an intermediate array.
+This means additional writes and reads from memory.
+Considering that memory access is very costly this should better be avoided.
+
+The solution is to delay the computation of the intermediate array.
+This means, that instead of computing the array in memory, it is done on-the-fly.
+This changes the construction of the skeletons somewhat.
+Instead of declaring the inputs directly, the arrays needed are passed in as an array environment.
+This is then accessed through a function |delayedLinearIndex|.
+
 \subsection{LLVM Backend}
-\cite{trevor2014llvm}
-uses gang workers.\cite{chakravarty2007data}
+Apart from the CUDA-backend and the Interpreter, There are a number of incomplete backends for Accelerate.
+One of those that looks promising is the LLVM backend.\cite{trevor2014llvm}
+It supports both CPUs as well as NVIDIA GPUs.
+Unfortunately, it is not possible to ``write once, run everywhere'' with LLVM, as there are important differences between the architectures.
+That is why the Skeletons cannot be shared between the 2.
+
+In this thesis, I will mainly work on the native backend, but the results should be transferable to the PTX backend as well.
+
+\todo{write about execution, but maybe wait for trevor to write stuff}uses gang workers.\cite{chakravarty2007data}
 
 \chapter{Contributions}
 \section{accelerate}
-\begin{itemize}
-\item StorableArray (errors in caching)
-\end{itemize}
+While testing some of the skeletons, in particular the first stage of |scanl|, I had trouble with lost writes.
+These happened only if multiple threads wrote to adjacent memory locations.
+Normally this behaviour should be prevented by cache coherency protocols.
+These, however can be disabled if the memory involved is believed to be constant.
+
+The Internal representation of |Array|s in Accelerate uses a |UArray| to store it's data.
+This type of Array is uses a |ByteArray#|, which is assumed to be constant.
+Switching the representation from |UArray| to |StorableArray| fixed the problem.
+
 \section{llvm-general}
+While llvm-general offers very good bindings for
 \begin{itemize}
 \item Targetmachine (Optimization)
 \item fast-math
@@ -523,8 +631,7 @@ uses gang workers.\cite{chakravarty2007data}
 When writing a compiler using LLVM in Haskell there is a good tutorial on how to do it at \citeurl{diehl2014jit}.
 It uses \citetitle{scarlet2013llvm} to interface with LLVM.
 The Idea followed in this tutorial is to use a monadic generator to produce the AST.
-
-\todo{longer introduction to monadic code generation}
+The goal of monadic code generation is to use the state of the monad to store the instructions.
 
 Figure \ref{fig:formonad} shows how to implement a simple for loop using monadic generators.
 \begin{figure}
@@ -565,8 +672,10 @@ Unfortunately, this produces a lot of boilerplate code.
 We have to define the basic blocks manually and add the instructions one by one.
 This has some obvious drawbacks, as the code can get unreadable pretty quickly.
 
-Another approach would be to use an EDSL.
-\todo{write about llvm-general-typed}
+A more clean approach is to use a complete EDSL.
+The idea here is to use block structure to specify the individual elements.
+An implementation of this idea is \citetitle{nathan2014llvm}.
+It actually goes further, as it also typechecks the produced code.
 
 I propose a third approach using quasiquotation\cite{mainland2007quote}.
 The idea behind quasiquotation is, that you can define a DSL with arbitrary syntax, which you can then directly transform into Haskell data structures.
@@ -690,6 +799,8 @@ This means that I can now reassign variables inside the LLVM code.
 Using this, I was able to define a much more simple syntax for the \lstinline{for}-loop.
 The placement of $\Phi$-nodes is not optimal, but redundant ones can be easily remove by LLVM's InstCombine pass.
 Figure \ref{fig:forquoteSSA} and \ref{fig:forquoteSSA1} show the quoted and the produced code after InstCombine respectively.
+The code produced by the for loop using SSA recovery is not identical to the code other code, but it is equivalent.
+In the new approach, the new loop counter is calculated at the end, whereas it was calculated in the loop head before.
 
 \begin{figure}
 \begin{lstlisting}
@@ -739,7 +850,8 @@ for.end:                                          ; preds = %for.head
 
 \subsection{syntax extensions}
 llvm-general-quote supports all llvm instructions.
-I added the following to the syntax:
+For better usage however, I added control structures like the for loop discussed earlier.
+These are the additions I made to the syntax:
 \begin{itemize}
  \item direct assignment: \lstinline!<var> = <ty> <val>!
  \item if: \lstinline!if <cond> { <instructions> } [ else { <instructions> } ]!
@@ -751,18 +863,175 @@ I added the following to the syntax:
 \section{Quasiquoter}
 The design of \citetitle{holtz2014quote} is inspired by \citetitle{mainland2007c}, which is also used in the cuda implementation of Accelerate.
 I use \citetitle{gill1995happy} and \citetitle{alex}.
-\section{Extension for-loop}
+
+\missingfigure{flowchart of quasiquoter implementation}
+
+\begin{code}
+type Conversion a b = forall m.(CodeGenMonad m) => a -> TExpQ (m b)
+
+class QQExp a b where
+  qqExpM :: Conversion a b
+  qqExp :: a -> TExpQ b
+  qqExp x = [||fst runState $$(qqExpM x) ((0,M.empty) :: (Int,M.Map L.Name [L.Operand])))||]
+\end{code}
+
+\begin{code}
+class (Applicative m, Monad m) => CodeGenMonad m where
+  newVariable    :: m L.Name
+  exec           :: m () -> m [L.BasicBlock]
+\end{code}
+
 \section{SSA}
 The standard method of producing SSA form in LLVM is to use stack allocated variables instead of registers to store values.
 The LLVM optimizer then uses the mem2reg pass to transform these into registers, adding the necessary phi-nodes in the process.
 
 Since one of the goals of the quasiquoter was to produce llvm-code that is as close to what the programmer wrote as possible, I decided against this approach.
 Instead I do the transformation myself.
-There are a multitude of algorithms to construct LLVM.
-The one most widely used (including in LLVM) is \citeauthor{cytron91efficiently}'s arlgorithm.
+To this end, I provide a single function
+
+\begin{code}
+toSSA :: [BasicBlock] -> [BasicBlock]
+\end{code}
+
+This is called with the list of all |BasicBlock|'s of a given function.
+
+To produce SSA form, variables have to be versioned, so that it is clear which value it holds at each given time.
+There are a multitude of algorithms to do this.
+The one most widely used (including in LLVM) is \citeauthor{cytron91efficiently}'s algorithm.
 It is however is rather involved as it relies on dominance frontiers.
 An easier approach was presented by \citeauthor{braun13simple}.
-\todo{write about implementation of SSA transformation}
+
+In this algorithm, the SSA is produced directly from the AST, without the need of extra analysis passes.
+To do this, the definitions of variables are tracked and updated as necessary.
+Without $\Phi$nodes, this is straight forward, as Figure \ref{fig:localnum} shows.
+
+\begin{figure}
+\begin{lstlisting}[language=ruby]
+writeVariable(variable, block, value):
+    currentDef[variable][block] <- value
+
+readVariable(variable, block):
+    if currentDef[variable] contains block:
+        # local value numbering
+        return currentDef[variable][block]
+    # global value numbering
+    return readVariableRecursive(variable, block)
+\end{lstlisting}
+\caption{Implementation of local value numbering}
+\label{fig:localnum}
+\end{figure}
+
+If the given variable has no definition in the current block, an empty $\Phi$-node is inserted and the local definition is set to the $\Phi$-node.
+Now the lookup is done recursively and the values are added to the $\Phi$-node.
+This extra step is necessary to detect loops correctly.
+I use a slightly different approach than presented in the paper.
+The original version tracks if the predecessors of a block are all processed.
+This is necessary since only then can the empty $\Phi$-nodes be filled.
+This approach makes sense if this is the norm.
+In case the input is an unordered list of blocks however, I can't make predictions about this.
+Instead I assume that no block is processed until all blocks are.
+Figure \ref{fig:globalnum} shows the modified |readVariableRecursive|.
+
+\begin{figure}
+\begin{lstlisting}[language=ruby]
+readVariableRecursive(variable, block):
+    if ||block.preds|| = 0:
+        # First block
+        val <- variable
+    else:
+        # Break potential cycles with operandless phi
+        val <- new Phi(block)
+        writeVariable(variable, block, val)
+    writeVariable(variable, block, val)
+    return val
+\end{lstlisting}
+\caption{Implementation of global value numbering}
+\label{fig:globalnum}
+\end{figure}
+
+Like most efficient graph algorithms, this algorithm relies heavily on mutable data structures.
+Although Haskell - being purely functional - doesn't support these normally, there are multiple methods to implement them inside a pure Monad.
+The obvious choices are |State| and |ST|.
+|IO| also provides mutable state, but is not an option here, since there is no safe way of running it in a pure context.
+I use |ST|, since it natively provides an arbitrary number of mutable variables with direct access.
+
+To use this however, the |BasicBlock|s have to be in a mutable format.
+
+\begin{code}
+type CFG s =[(Name, MutableBlock s)]
+
+data MutableBlock s = MutableBlock {
+  blockName :: Name,
+  blockIncompletePhis :: STRef s (M.Map Name (MutableInstruction s)),
+  blockPhis :: STRef s [MutableInstruction s],
+  blockInstructions :: [MutableInstruction s],
+  blockTerminator :: MutableTerminator s,
+  blockPreds :: [Name],
+  blockDefs :: STRef s (M.Map Name Name)
+  }
+
+type MutableInstruction s = STRef s (Named Instruction)
+type MutableTerminator  s = STRef s (Named Terminator)
+\end{code}
+
+Although not everything is mutable in this representation, it is sufficient.
+After the conversion, the |BasicBlock|s can be processed one by one.
+First, the variables created by |Instruction|s are adjusted.
+The same is done for usages.
+If there a variable is not defined in a given block and there are predecessors, an incomplete |Phi| instruction is added.
+Incomplete here means, that the values for every given predecessor are left undefined.
+When this is done, the variables referenced by existing |Phi| instructions are replaced by the new values.
+
+Every time a recursive read is done, a new incomplete |Phi| instruction is added.
+These are handled last by reading the variable in all preceding blocks and replacing the undefined values.
+Since this involved reading however, new incomplete |Phi| instructions can be added in the process.
+To handle all of them, the function is executed until there are no incomplete |Phi| instructions.
+
+Figure \ref{fig:tossa} shows the complete |toSSA| function.
+
+\begin{figure}
+\begin{code}
+toSSA :: [BasicBlock] -> [BasicBlock]
+toSSA bbs = runST $ do
+  cfg <- toCFG $ bbs
+  ctr <- newSTRef 1
+
+  -- process all Instructions
+  mapM_ (blockToSSAPre ctr) (map snd cfg)
+  -- replace names in Phis with correct references
+  mapM_ (blockToSSAPhi ctr cfg) (map snd cfg)
+  -- replace names in newly added Phis with correct references
+  handleIncompletePhis ctr cfg
+
+  fromCFG cfg
+\end{code}
+\caption{|toSSA|}
+\label{fig:tossa}
+\end{figure}
+
+\section{Control Structures}
+When implementing the control structures, I had to decide on what level I wanted to introduce it.
+In a traditional procedural language like C, they would sit alongside the other expressions like assignments or function calls.
+This would correspond to the instructions in LLVM.
+For this to be possible however, I need to be able to extend them into just a sequence of instructions.
+In case of an if-then-else this is still kind of possible using select to get the result value.
+The loop structures however are not possible, as they require an arbitrary number of jumps.
+
+\subsection{first version (direct)}
+The solution is to have the control structures on the level of basic blocks.
+
+
+\begin{itemize}
+\item cumbersome syntax
+\item limited functionality
+\end{itemize}
+
+\subsection{second version (mutable variables)}
+\begin{itemize}
+\item simpler syntax
+\item very flexible in its use
+\item simpler implementation
+\end{itemize}
 
 \chapter{Skeletons}
 \section{map}
