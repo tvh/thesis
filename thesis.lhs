@@ -20,6 +20,8 @@
 \usepackage{listings}
 \usepackage{enumitem}
 \usepackage[section]{placeins}
+\usepackage{tikz}
+\usetikzlibrary{shapes.geometric, arrows}
 
 \lstset{basicstyle=\footnotesize\ttfamily,
         breaklines=true,
@@ -82,6 +84,12 @@
  {inkscape -z -D --file=#2.svg --export-pdf=#2.pdf}
  \includegraphics[#1]{#2.pdf}
 }
+
+\tikzstyle{startstop} = [rectangle, rounded corners, minimum width=3cm, minimum height=1cm,text centered, draw=black, fill=red!30]
+\tikzstyle{io} = [trapezium, trapezium left angle=70, trapezium right angle=110, minimum width=3cm, minimum height=1cm, text centered, draw=black, fill=blue!30]
+\tikzstyle{process} = [rectangle, minimum width=3cm, minimum height=1cm, text centered, draw=black, fill=orange!30]
+\tikzstyle{decision} = [diamond, minimum width=3cm, minimum height=1cm, text centered, draw=black, fill=green!30]
+\tikzstyle{arrow} = [thick,->,>=stealth]
 
 \begin{document}
 \frontmatter
@@ -157,9 +165,10 @@ I use this quasi-quoter to implement the skeletons in the LLVM backend.
 \mainmatter
 
 \chapter{Introduction}
-
+\todo{write introduction}
 
 \chapter{Technologies}
+\todo{write intro to Technologies chapter}
 \section{LLVM}
 LLVM\cite{lattner2002llvm} is a compiler infrastructure written in C++.
 In contrast to GCC it is designed to be used as a library by compilers.
@@ -602,15 +611,29 @@ This is then accessed through a function |delayedLinearIndex|.
 \subsection{LLVM Backend}
 Apart from the CUDA-backend and the Interpreter, There are a number of incomplete backends for Accelerate.
 One of those that looks promising is the LLVM backend.\cite{trevor2014llvm}
-It supports both CPUs as well as NVIDIA GPUs.
-Unfortunately, it is not possible to ``write once, run everywhere'' with LLVM, as there are important differences between the architectures.
+It uses llvm-general to bind to the LLVM API.
+It supports both CPUs as well as NVIDIA GPUs through PTX.
+In contrast to the CUDA backend, this has the advantage that no external program has to be called for compilation of the kernels.
+This is also true for the CPU side.
+Unfortunately, it is not possible to ``write once, run everywhere'' with LLVM.
+Although the instructions are exactly the same between architectures, the supplied libraries are not.
 That is why the Skeletons cannot be shared between the 2.
+
+To run a computation in the LLVM native backend, the skeletons are first optimized and compiled to a callable function.
+Similar to repa, it uses uses gang workers\cite{chakravarty2007data} for execution.
+These are multiple threads, typically as many as there are capabilities available.
+They wait on an |MVar| for IO actions to perform.
+At first, the load is split evenly between the workers.
+If a thread finishes early however, it looks for more work.
+If it finds that another thread has excess work available, it will steal half of it.
+This process is called work stealing.
+On a shared memory architecture, this has very little overhead.
 
 In this thesis, I will mainly work on the native backend, but the results should be transferable to the PTX backend as well.
 
-\todo{write about execution, but maybe wait for trevor to write stuff}uses gang workers.\cite{chakravarty2007data}
-
 \chapter{Contributions}
+\todo{write intro to contribution chapter}
+
 \section{accelerate}
 While testing some of the skeletons, in particular the first stage of |scanl|, I had trouble with lost writes.
 These happened only if multiple threads wrote to adjacent memory locations.
@@ -622,11 +645,28 @@ This type of Array is uses a |ByteArray#|, which is assumed to be constant.
 Switching the representation from |UArray| to |StorableArray| fixed the problem.
 
 \section{llvm-general}
-While llvm-general offers very good bindings for
-\begin{itemize}
-\item Targetmachine (Optimization)
-\item fast-math
-\end{itemize}
+llvm-general offers a nice set of bindings to the LLVM API.
+It is not feature-complete however.
+One area where I could make an improvement on this is the optimization.
+The sole difference between the |PassSetSpect| and |CuratedPassSetSpec| should be the way they define passes.
+The |CuratedPassSetSpec| however was lacking important fields for data layout and target machine.\footnote{\url{https://github.com/bscarlet/llvm-general/pull/101}}
+Also, they were mostly ignored when supplied to the |PassSetSpec|.\footnote{\url{https://github.com/bscarlet/llvm-general/issues/91}}
+In the process, I also added support for loop and slp vectorization to |CuratedPassSetSpec|.
+
+Another issue was the lack of support for fast-math flags.\footnote{\url{https://github.com/bscarlet/llvm-general/issues/90}}
+They are now supported with the following datatype:
+\begin{code}
+data FastMathFlags
+  = NoFastMathFlags
+  | UnsafeAlgebra
+  | FastMathFlags {
+      noNaNs :: Bool,
+      noInfs :: Bool,
+      noSignedZeros :: Bool,
+      allowReciprocal :: Bool
+    }
+\end{code}
+
 \section{llvm-general-quote}
 When writing a compiler using LLVM in Haskell there is a good tutorial on how to do it at \citeurl{diehl2014jit}.
 It uses \citetitle{scarlet2013llvm} to interface with LLVM.
@@ -860,11 +900,49 @@ These are the additions I made to the syntax:
 \end{itemize}
 
 \chapter{Implementation}
-\section{Quasiquoter}
-The design of \citetitle{holtz2014quote} is inspired by \citetitle{mainland2007c}, which is also used in the cuda implementation of Accelerate.
-I use \citetitle{gill1995happy} and \citetitle{alex}.
+\todo{write intro to Implementation chapter}
 
-\missingfigure{flowchart of quasiquoter implementation}
+\section{Quasiquoter}
+A quasiquoter basically works like a mini compiler.
+You get a string as input and have to generate Haskell code out of that.
+In it's simplest form this would be just a parser.
+But it is not limited to that, since all you need to define for a quasiquoter is a function
+\begin{code}
+quoteExp :: String -> Q Exp
+\end{code}
+The |Q Exp| in this case is defined by Template Haskell.
+Since it uses Template Haskell to construct expressions, it is possible to reference variables in scope using antiquotation.
+Figure \ref{fig:quasichart} shows a the design of a typical quasiquoter.
+
+\begin{figure}
+\begin{center}
+\begin{tikzpicture}[node distance=2.5cm]
+\node (start) [draw=none, fill=none] {};
+\node (lexer) [process, right of=start, xshift=1.5cm] {Lexer};
+\node (parser) [process, below of=lexer, xshift=2.5cm] {Parser};
+\node (trans) [process, above of=parser, xshift=2.5cm, align=center] {Desugaring \& \\  Antiquotation};
+\node (res) [draw=none, fill=none, right of=trans, xshift=1.5cm] {};
+
+\draw [arrow] (start) -- node[anchor=south] {|String|} (lexer);
+\draw [arrow] (lexer) -- node[anchor=west] {|[Token]|} (parser);
+\draw [arrow] (parser) -- node[anchor=west, align=center] {|Module|\\(with additions)} (trans);
+\draw [arrow] (trans) -- node[anchor=south] {|Module|} (res);
+\end{tikzpicture}
+\end{center}
+\caption{flowchart quasiquoter}
+\label{fig:quasichart}
+\end{figure}
+
+The design of \citetitle{holtz2014quote}, the quasiquoter I defined for LLVM, is inspired by \citetitle{mainland2007c}, which is also used in the cuda implementation of Accelerate.
+This means I use \citetitle{alex} to specify the lexer and \citetitle{gill1995happy} for the parser.
+The goal of this quasiquoter is to generate an AST as defined by llvm-general-pure.
+If I want to do more than just parse complete LLVM code, I can't use this as a target for the parser.
+This means it is necessary to copy almost the whole AST and add additional constructors for antiquotation etc.
+This step wasn't necessary in \citetitle{mainland2007c} since it's target datastructure still has constructors for antiquotation.
+
+At this point the construction of the 2 quasiquoters differs significantly.
+\citetitle{mainland2007c} assumes that constructors stay the same, as long as there isn't a different case available.
+\todo{pickup writing here}
 
 \begin{code}
 type Conversion a b = forall m.(CodeGenMonad m) => a -> TExpQ (m b)
@@ -872,7 +950,9 @@ type Conversion a b = forall m.(CodeGenMonad m) => a -> TExpQ (m b)
 class QQExp a b where
   qqExpM :: Conversion a b
   qqExp :: a -> TExpQ b
-  qqExp x = [||fst runState $$(qqExpM x) ((0,M.empty) :: (Int,M.Map L.Name [L.Operand])))||]
+  qqExp x =
+    [||let s = ((0,M.empty) :: (Int,M.Map L.Name [L.Operand])))
+       in fst runState $$(qqExpM x) s||]
 \end{code}
 
 \begin{code}
@@ -881,7 +961,171 @@ class (Applicative m, Monad m) => CodeGenMonad m where
   exec           :: m () -> m [L.BasicBlock]
 \end{code}
 
+\section{Control Structures}
+When implementing the control structures, I had to decide on what level I wanted to introduce it.
+In a traditional procedural language like C, they would sit alongside the other expressions like assignments or function calls.
+This would correspond to the instructions in LLVM.
+For this to be possible however, I need to be able to extend them into just a sequence of instructions.
+In case of an if-then-else this is still kind of possible using select to get the result value.
+The loop structures however are not possible, as they require an arbitrary number of jumps.
+
+\subsection{direct approach}
+The solution is to have the control structures on the level of basic blocks.
+This way it is possible to just produce multiple basic blocks.
+For something to behave like a basic block, it must have all the elements of a basic block.
+In llvm-general, a basic block is represented as
+
+\begin{code}
+data BasicBlock =
+  BasicBlock Name [Named Instruction] (Named Terminator)
+\end{code}
+
+It consists of a name, a list of instructions and a terminator.
+The name is used as a target label for jumps.
+The terminator can either be a jump to a different block or a return statement.
+The instructions are just a stream without any jumps, but can also contain function calls.
+
+Lets look at a classic for loop.
+It starts by initializing a counter.
+Then the counter is checked against a maximum.
+If this is not yet reached, the loop body gets executed and the counter incremented.
+If it is, then the loop exits and the next expression is evaluated.
+Figure \ref{fig:forchart} shows the process.
+
+\begin{figure}
+\begin{center}
+\begin{tikzpicture}[node distance=2cm]
+\node (start) [startstop] {Start};
+\node (init) [process, below of=start] {i = 0};
+\node (check) [decision, below of=init] {i < n?};
+\node (body) [io, below of=check] {loop body};
+\node (inc) [process, right of=check, xshift=2cm] {i = i + 1};
+\node (stop) [startstop, left of=body, xshift=-2cm] {Stop};
+
+\draw [arrow] (start) -- (init);
+\draw [arrow] (init) -- (check);
+\draw [arrow] (check) --node[anchor=east] {true} (body);
+\draw [arrow] (check) -|| node[anchor=east] {false} (stop);
+\draw [arrow] (body) -|| (inc);
+\draw [arrow] (inc) -- (check);
+\end{tikzpicture}
+\end{center}
+\caption{flowchart for-loop}
+\label{fig:forchart}
+\end{figure}
+
+To translate this into LLVM, I need a label, the name of the counter, it's minimum and maximum value and the loop body.
+In a normal language these would be sufficient.
+LLVM doesn't have mutable variables, however.
+This means that any state, like an accumulator, needs to be explicitly defined.
+The syntax I chose for this is the following:
+
+\begin{lstlisting}[numbers=none]
+for <ty1> <var1> in <val1> to <val2> with <ty2> <values> as <var2>,
+           label <jumptarget> { <loop body> }
+\end{lstlisting}
+
+The values here work the same way as with \lstinline!phi!-instructions.
+It is often necessary to nest loops.
+To allow for this, the loop body can consist of multiple basic blocks.
+This way, it works much like function body, with the loop counter and the accumulator as arguments.
+With this analogy, I reuse the return statement to indicate the end of the loop.
+The value returned is used as the new value of the accumulator.
+
+\todo{examples}
+
+When implementing this, there are a few things that make matters non-trivial.
+Since LLVM doesn't have mutable variables, it is necessary to introduce \lstinline{phi} instructions manually.
+This node has to have a value specified for every incoming block.
+First these are the blocks and values specified in the loop header.
+On top this, these are all the blocks inside the loop returning a value.
+The values are then extracted and appended to the existing list.
+
+\todo{examples}
+
+This is relatively straight forward if you were to implement it as a regular Haskell function.
+Working with quasiquoters though, It all has to be implemented in a Template Haskell.
+This means that it is sometimes necessary to move code around just so that it compiles, although the types are correct.
+The reason for this is the stage restriction of Template Haskell.
+A value cannot be spliced into an expression if it was defined locally.
+Another big difference is type safety.
+Before GHC 7.8, the expressions inside a quoted block would not be typechecked.
+You would still get type errors for the code, but rather than complaining at the definition site it would complain at the usage site.
+This makes defining complex functions nearly impossible.
+But even with GHC 7.8 you get some warnings when splicing code in rather than where you defined them.
+For example, it is not checked if a pattern match is exhaustive.
+Although this check could be done in the type checker, it is done while desugaring to core.
+I filed this as a bug in GHC (\#9113) and it seems that there is work done which would solve this issue.
+
+\todo{write about desugaring}
+
+\subsection{nextblock}
+In principle basic blocks are not ordered.
+The only exception is the first block, which also cannot have any predecessors.
+In reality however, they are mostly ordered in the order of control flow.
+With this, it is not strictly necessary to specify which block will be next after a loop as it is mostly the textually next one.
+This simplifies the syntax somewhat.
+
+\begin{lstlisting}[numbers=none]
+for <ty1> <var1> in <val1> to <val2> with <ty2> <values> as <var2>
+           { <loop body> } 
+\end{lstlisting}
+
+\todo{examples}
+\todo{write about desugaring}
+
+\begin{itemize}
+\item cumbersome syntax
+\item limited functionality
+\item jumpnext
+\end{itemize}
+
+\subsection{mutable variables}
+Although the above methods work, there are some fundamental problems with them.
+The fact that you have to specify the variables in the loop header and then return the new value is awkward.
+It abuses the return for something that it is not, namely jumping to the loop header.
+I could have chosen to use a jump instead, but then there would be no way to update the accumulator.
+Another more important flaw is the limitation to one value.
+It is possible, of course, to bundle all needed values together in a struct, but this adds a lot of necessary boilerplate code.
+
+In an ordinary language a for loop would consist of just the loop counter and would handle accumulators through mutable variables.
+LLVM doesn't support mutable variables however.
+Since I need however, I implemented support for them through my quasiquoter.
+The implementation is described in \ref{sec:ssa}.
+
+With this idea, the syntax for the for loop is now reduced to
+\begin{lstlisting}[numbers=none]
+for <ty1> <var1> in <val1> to <val2> { <loop body> }
+\end{lstlisting}
+This is a great improvement upon the first approach.
+The main benefit now is the increased flexibility.
+It is also more concise and doesn't abuse the return to pass through variables.
+
+As a side effect, the implementation got a lot simpler.
+It is now no longer necessary to scan for return statements to fill \lstinline!phi!-instructions for both counter and accumulator.
+Instead, the last block in the loop body just jumps to an end-block, where the counter gets increased and then jumps to the head.
+Now the for-loop can be implemented exactly like shown in figure \ref{fig:forchart}.
+
+To allow mutable variables, there has to be a way to initialize them.
+The syntax for this is
+\begin{lstlisting}[numbers=none]
+ <var> = <ty> <val>
+\end{lstlisting}
+To implement this, I used the select statement.
+The above code gets translated into
+\begin{lstlisting}[numbers=none]
+ <var> = select i1 true, <ty> <val>, <ty> <val>
+\end{lstlisting}
+It always selects the first value.
+Another way would be to leave the second value undefined.
+\begin{lstlisting}[numbers=none]
+ <var> = select i1 true, <ty> <val>, <ty> undef
+\end{lstlisting}
+Obviously this adds another unnecessary instruction to the produced code.
+This is negligible however, as it is easily removed by LLVM's constant propagation.
+
 \section{SSA}
+\label{sec:ssa}
 The standard method of producing SSA form in LLVM is to use stack allocated variables instead of registers to store values.
 The LLVM optimizer then uses the mem2reg pass to transform these into registers, adding the necessary phi-nodes in the process.
 
@@ -1009,30 +1253,6 @@ toSSA bbs = runST $ do
 \label{fig:tossa}
 \end{figure}
 
-\section{Control Structures}
-When implementing the control structures, I had to decide on what level I wanted to introduce it.
-In a traditional procedural language like C, they would sit alongside the other expressions like assignments or function calls.
-This would correspond to the instructions in LLVM.
-For this to be possible however, I need to be able to extend them into just a sequence of instructions.
-In case of an if-then-else this is still kind of possible using select to get the result value.
-The loop structures however are not possible, as they require an arbitrary number of jumps.
-
-\subsection{first version (direct)}
-The solution is to have the control structures on the level of basic blocks.
-
-
-\begin{itemize}
-\item cumbersome syntax
-\item limited functionality
-\end{itemize}
-
-\subsection{second version (mutable variables)}
-\begin{itemize}
-\item simpler syntax
-\item very flexible in its use
-\item simpler implementation
-\end{itemize}
-
 \chapter{Skeletons}
 \section{map}
 \section{fold}
@@ -1078,11 +1298,12 @@ void scanAlt(double* in, double* out, unsigned length, unsigned start, unsigned 
 \section{stencil}
 
 \chapter{Conclusion}
+\section{Benchmarks}
 \section{Related Work}
 
 
 \appendix
-\chapter{Listings}
+%\chapter{Listings}
 
 \backmatter
 \sloppy
