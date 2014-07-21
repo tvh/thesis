@@ -227,7 +227,7 @@ for.end:                                          ; preds = %for.body, %entry
 The first obvious difference is the lack of sophisticated control structures.
 In LLVM every function is divided into basic blocks.
 A basic block is a continuous stream of instructions with a terminator at the end.
-Instructions are  add, mult, call, \dots, but also call.
+Instructions are add, mult, call, \dots, but also call.
 Terminators can either be used to jump to another block (branch) or return to the calling function.
 
 To allow for dynamic control flow, there are $\Phi$-nodes.
@@ -631,6 +631,42 @@ On a shared memory architecture, this has very little overhead.
 
 In this thesis, I will mainly work on the native backend, but the results should be transferable to the PTX backend as well.
 
+\section{Template Haskell}
+Template Haskell is an extension to Haskell that allows you to do type-safe compile-time meta-programming, with Haskell both as the manipulating language and the language being manipulated.
+Pre-7.8, one would get a Template Haskell expression using quasiquoters like this.
+\begin{code}
+foo :: Q Exp
+foo = [|Just 5|]
+\end{code}
+It is not clear which type of expression it is.
+Another nasty side-effect of this is that the expression is not checked to be consistent internally.
+That leads to something like this being legal.
+\begin{code}
+bar :: Q Exp
+bar = [|case 1 of
+          Nothing -> 42
+          True    -> ()|]
+\end{code}
+Apart from being syntactically correct, this makes no sense at all.
+With GHC 7.8, a new form of quoting Haskell code was introduced.
+\begin{code}
+foo :: Q (TExp (Maybe Int))
+foo = [||Just 5||]
+\end{code}
+The code is now typechecked along with the rest of the code in the module.
+This means it is no longer possible to easily produce nearly untraceable type errors with Template Haskell.
+The structure of the expressions remains unchanged however.
+\begin{code}
+newtype TExp a = TExp { unType :: Exp }
+\end{code}
+This means it is possible to use typed expressions in places where untyped an untyped expression is exprected.
+The reverse is also true, but type safety is lost in the process.
+\begin{code}
+unsafeTExpCoerce :: Q Exp -> Q (TExp a)
+\end{code}
+
+\todo{usage and stage restrictions}
+
 \chapter{Contributions}
 \todo{write intro to contribution chapter}
 
@@ -942,10 +978,26 @@ This step wasn't necessary in \citetitle{mainland2007c} since it's target datast
 
 At this point the construction of the 2 quasiquoters differs significantly.
 \citetitle{mainland2007c} assumes that constructors stay the same, as long as there isn't a different case available.
-\todo{pickup writing here}
-
+It does this by using the function
 \begin{code}
-type Conversion a b = forall m.(CodeGenMonad m) => a -> TExpQ (m b)
+dataToExpQ :: Data a => (forall b. Data b => b -> Maybe (Q Exp)) -> a -> Q Exp
+\end{code}
+This functions converts anything that is of typeclass |Data| into a Template Haskell expression.
+In addition to this however, it also takes an extra function to handle exceptions.
+This gets executed on every subterm recursively.
+If it returns |Nothing|, then the term gets translated into an expression directly.
+It it returns |Just exp|, then |exp| is used instead.
+The transformation function is then glued together as
+\begin{code}
+qqExp :: Typeable a => a -> Maybe (Q Exp)
+qqExp = const Nothing  `extQ` qqStringE
+                       `extQ` qqIdE
+...
+\end{code}
+Since I didn't use the same datatype for input and output, I took a different approach.
+I created the following typeclass.
+\begin{code}
+type Conversion a b = forall m.(CodeGenMonad m) => a -> Q (TExp (m b))
 
 class QQExp a b where
   qqExpM :: Conversion a b
@@ -954,15 +1006,46 @@ class QQExp a b where
     [||let s = ((0,M.empty) :: (Int,M.Map L.Name [L.Operand])))
        in fst runState $$(qqExpM x) s||]
 \end{code}
-
+The |CodegenMonad| is important mostly to supply new names to unnamed basic blocks.
+It also provides an iterface to antiquote a list of basicblocks produced by monadic code generation.
+This is necessary to interface with existing code in accelerate-llvm.
 \begin{code}
 class (Applicative m, Monad m) => CodeGenMonad m where
   newVariable    :: m L.Name
   exec           :: m () -> m [L.BasicBlock]
 \end{code}
+The |Applicative| context is not necessary since |Monad| is strictly more powerful than |Applicative|.\footnote{With GHC 7.10, |Applicative| will become a superclass of |Monad|.
+In the meantime, all instances of |Monad| should be adapted to also provide an instance of |Applicative|.
+Details can be found at \url{http://www.haskell.org/haskellwiki/Functor-Applicative-Monad_Proposal}.}
+I decided to include it however since it allows for a more concise syntax.
+Using a typeclass instead of a single function has multiple advantages.
+When there is a case missing, it will complain when the quoter is compiled instead of when it is used.
+This approach relies on typed expressions, which were introduced with GHC 7.8.
+
+Here is a simple example of an instance declaration of |QQExp|.
+\begin{code}
+instance QQExp A.Module L.Module where
+  qqExpM (A.Module n dl tt ds) =
+    [||L.Module <$> $$(qqExpM n) <*> $$(qqExpM dl)
+                <*> $$(qqExpM tt) <*> $$(qqExpM ds)||]
+\end{code}
+In this case the structure of both the source and target constructors are the same.\footnote{Instances like this could be generated using a Template Haskell function.
+I decided against using Template Haskell here, since this would make the code harder to debug.}
+Antiquotations have to be handled a little different.
+Since there can't be any information on the antiquoted expression, it has no specific type.
+To use it in a typed expression anyway, it has to be coerced.
+\begin{code}
+instance QQExp A.Operand L.Operand where
+  qqExpM (A.AntiOperand s) =
+    [||$$(unsafeTExpCoerce $ antiVarE s)||]
+\end{code}
+Here I decided to first produce the typed expression and then splice it into a quoted expression.
+This is mostly a cosmetic choice, as the same code could be produced without doing this round trip.
+
+\todo{toInteger etc.}
 
 \section{Control Structures}
-When implementing the control structures, I had to decide on what level I wanted to introduce it.
+When implementing the control structures, I had to decide on what level I wanted to introduce them.
 In a traditional procedural language like C, they would sit alongside the other expressions like assignments or function calls.
 This would correspond to the instructions in LLVM.
 For this to be possible however, I need to be able to extend them into just a sequence of instructions.
