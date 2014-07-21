@@ -664,8 +664,26 @@ The reverse is also true, but type safety is lost in the process.
 \begin{code}
 unsafeTExpCoerce :: Q Exp -> Q (TExp a)
 \end{code}
+To use the defined expression, it can then be spliced in using |$$(..)|.
 
-\todo{usage and stage restrictions}
+This, however, is not possible everywhere.
+The following for example is not legal.
+\begin{code}
+bar :: Int
+bar = let x = [||1||]
+      in $$(x)
+\end{code}
+And produces this error message:
+\begin{verbatim}
+GHC stage restriction:
+  'x' is used in a top-level splice or annotation,
+  and must be imported, not defined locally
+In the splice: $$x
+\end{verbatim}
+Template Haskell code has to be executable on compile-time.
+This means that in a splice, all expressions must be known.
+As a consequence, they can't be defined locally or passed in as function arguments.
+Not having this restriction would lead to Haskell not being type safe.
 
 \chapter{Contributions}
 \todo{write intro to contribution chapter}
@@ -1030,7 +1048,7 @@ instance QQExp A.Module L.Module where
                 <*> $$(qqExpM tt) <*> $$(qqExpM ds)||]
 \end{code}
 In this case the structure of both the source and target constructors are the same.\footnote{Instances like this could be generated using a Template Haskell function.
-I decided against using Template Haskell here, since this would make the code harder to debug.}
+I decided against using Template Haskell to generate the functions here, since this would make the code harder to debug.}
 Antiquotations have to be handled a little different.
 Since there can't be any information on the antiquoted expression, it has no specific type.
 To use it in a typed expression anyway, it has to be coerced.
@@ -1039,10 +1057,24 @@ instance QQExp A.Operand L.Operand where
   qqExpM (A.AntiOperand s) =
     [||$$(unsafeTExpCoerce $ antiVarE s)||]
 \end{code}
-Here I decided to first produce the typed expression and then splice it into a quoted expression.
+The typed expression is first produced and then splice it into a quoted expression.
 This is mostly a cosmetic choice, as the same code could be produced without doing this round trip.
 
-\todo{toInteger etc.}
+In some cases antiquotation is still a bit cumbersome.
+One of these cases is the use of numerical constants.
+To antiquote those, it would be necessary to first construct a |Constant|.
+I decided it would be nicer if it was also possible to use orfunary Haskell values like |Word32| and |Float| directly.
+To this end, I created a class
+\begin{code}
+class ToConstant a where
+  toConstant :: a -> L.Constant
+\end{code}
+With this it is possible to just write the following:
+\begin{code}
+foo :: Instruction
+foo = let i = 5::Word32
+      in [lli|add i32 %x, $const:i|]
+\end{code}
 
 \section{Control Structures}
 When implementing the control structures, I had to decide on what level I wanted to introduce them.
@@ -1111,8 +1143,8 @@ for <ty1> <var1> in <val1> to <val2> with <ty2> <values> as <var2>,
 The values here work the same way as with \lstinline!phi!-instructions.
 It is often necessary to nest loops.
 To allow for this, the loop body can consist of multiple basic blocks.
-This way, it works much like function body, with the loop counter and the accumulator as arguments.
-With this analogy, I reuse the return statement to indicate the end of the loop.
+This way, it works much like a function body, with the loop counter and the accumulator as arguments.
+Going further with this analogy, I reuse the return statement to indicate the end of the loop.
 The value returned is used as the new value of the accumulator.
 
 \todo{examples}
@@ -1151,7 +1183,7 @@ This simplifies the syntax somewhat.
 
 \begin{lstlisting}[numbers=none]
 for <ty1> <var1> in <val1> to <val2> with <ty2> <values> as <var2>
-           { <loop body> } 
+           { <loop body> }
 \end{lstlisting}
 
 \todo{examples}
