@@ -1147,7 +1147,22 @@ This way, it works much like a function body, with the loop counter and the accu
 Going further with this analogy, I reuse the return statement to indicate the end of the loop.
 The value returned is used as the new value of the accumulator.
 
-\todo{examples}
+A simple function summing up the values from \lstinline{%m} to \lstinline{%n-1} would look like the following.
+\begin{lstlisting}
+i32 foo(i32 %m, i32 %n) {
+  entry:
+    br label %for
+
+  for:
+    for i32 %i in %m to %n with i32 [ 0, %entry ] as %j, label %end {
+        %k = add i32 %i, %j
+        ret i32 %k
+    }
+
+  end:
+    ret i32 %j
+}
+\end{lstlisting}
 
 When implementing this, there are a few things that make matters non-trivial.
 Since LLVM doesn't have mutable variables, it is necessary to introduce \lstinline{phi} instructions manually.
@@ -1156,8 +1171,6 @@ First these are the blocks and values specified in the loop header.
 On top this, these are all the blocks inside the loop returning a value.
 The values are then extracted and appended to the existing list.
 
-\todo{examples}
-
 This is relatively straight forward if you were to implement it as a regular Haskell function.
 Working with quasiquoters though, It all has to be implemented in a Template Haskell.
 This means that it is sometimes necessary to move code around just so that it compiles, although the types are correct.
@@ -1165,7 +1178,8 @@ The reason for this is the stage restriction of Template Haskell.
 A value cannot be spliced into an expression if it was defined locally.
 Another big difference is type safety.
 Before GHC 7.8, the expressions inside a quoted block would not be typechecked.
-You would still get type errors for the code, but rather than complaining at the definition site it would complain at the usage site.
+You would still get type errors for the code.
+Rather than complaining at the definition site it would complain at the usage site however.
 This makes defining complex functions nearly impossible.
 But even with GHC 7.8 you get some warnings when splicing code in rather than where you defined them.
 For example, it is not checked if a pattern match is exhaustive.
@@ -1186,7 +1200,7 @@ for <ty1> <var1> in <val1> to <val2> with <ty2> <values> as <var2>
            { <loop body> }
 \end{lstlisting}
 
-\todo{examples}
+An example of this can be found in figure \ref{fig:forquote}, page \pageref{fig:forquote}.
 \todo{write about desugaring}
 
 \begin{itemize}
@@ -1369,8 +1383,120 @@ toSSA bbs = runST $ do
 \end{figure}
 
 \chapter{Skeletons}
+The skeletons are one of the core components of an accelerate backend.
+They provide the functionality of a given array function like |map| or |fold|.
+They are basically functions that given extra arguments for array environment and higher order function generate a concrete function which can then be compiled.
+In accelerate-llvm, this process is abstracted through a typeclass.
+\begin{code}
+class Skeleton arch where
+  generate      :: (Shape sh, Elt e)
+                => arch
+                -> Gamma aenv
+                -> IRFun1 aenv (sh -> e)
+                -> CodeGen [Kernel arch aenv (Array sh e)]
+  ...
+\end{code}
+Each of the different functions in this class corresponds to a specific skeleton.
+In the following, I will go through the skeletons one by one.
+\section{generate}
+The simplest skeleton is |generate|.
+As the name suggests, it produces an array with just a function from index to a value.
+\begin{code}
+mkGenerate
+    :: forall arch aenv sh e. (Shape sh, Elt e)
+    => Gamma aenv
+    -> IRFun1 aenv (sh -> e)
+    -> CodeGen [Kernel arch aenv (Array sh e)]
+\end{code}
+Before the actual quasiquoted llvm code, we have to set up some values first.
+The first thing we need are the parameters for the output array and the array environment.
+The start and stop indices are also required.
+\begin{code}
+mkGenerate aenv apply =
+  let
+      arrOut   = arrayDataOp  (undefined::Array sh e) "out"
+      shOut    = arrayShapeOp (undefined::Array sh e) "out"
+      paramOut = arrayParam   (undefined::Array sh e) "out"
+      paramEnv = envParam aenv
+      (start, end, paramGang)
+               = gangParam
+\end{code}
+The last piece before the actual code are some declarations for used types and local variables.
+\begin{code}
+      intType  = typeOf (int :: IntegralType Int)
+
+      r        = locals (undefined::e) "r"
+      i        = local intType "i"
+      ix       = locals (undefined::sh) "ix"
+\end{code}
+The rest is then relatively self-explaining.
+\begin{code}
+  in
+  makeKernelQ "generate" [llgM|
+    define void @generate
+    (
+        $params:paramGang,
+        $params:paramOut,
+        $params:paramEnv
+    )
+    {
+        for $type:intType %i in $opr:start to $opr:end
+        {
+            ;; convert to multidimensional index
+            $bbsM:(ix .=. indexOfInt shOut i)
+            ;; apply generator function
+            $bbsM:(r  .=. apply ix)
+            ;; store result
+            $bbsM:(writeArray arrOut i r)
+        }
+        ret void
+    }
+  |]
+\end{code}
+\subsection{vectorization}
+|generate| usually vectorizes fairly well if the supplied function is vectorizable.
+A function which randomly references a different manifest array would not vectorize for example.
+The multidimensional indices are the challenging part for the optimizer.
+They are generated via a series of modulo operations.
+These can be easily vectorized on modern CPUs however.
+
 \section{map}
+|map| works similar to |generate|.
+In fact it can be easily implemented using |generate|.
+One important difference between |generate| and |map| is how they access the array.
+|generate| works with multidimensional indices.
+This is not necessary with |map| however, as |map| keeps indices identical.
+
+The following is the core part of the |map| skeleton.
+I omit the rest of the function as the difference to |generate| is mostly mechanical.
+\begin{code}
+makeKernelQ "map" [llgM|
+    define void @map
+    (
+        $params:paramGang,
+        $params:paramOut,
+        $params:paramEnv
+    )
+    {
+        for $type:intType %i in $opr:start to $opr:end
+        {
+            $bbsM:(x .=. delayedLinearIndex [i])
+            $bbsM:(y .=. apply x)
+            $bbsM:(writeArray arrOut i y)
+        }
+        ret void
+    }
+  |]
+\end{code}
+
+\subsection{vectorization}
+|map| vectorizes even better than |generate|.
+If the supplied array is manifest, no index conversion is necessary.
+This way even the memory reads can be done vectorized.
+
 \section{fold}
+The |fold| skeleton is different to the others
+
 \section{scan}
 \cite{ladner1980parallel}
 My plan is the following:
@@ -1410,12 +1536,148 @@ void scanAlt(double* in, double* out, unsigned length, unsigned start, unsigned 
   }
 }
 \end{lstlisting}
+
 \section{stencil}
+Stencil operations are basically a generalization of map.
+The difference is that the focus is not on a single element.
+Instead it also looks at the surrounding cells.
+This is leads to a problem however.
+While |map| is always guaranteed to read in bounds, this can't be said about stencils.
+There are multiple ways to avoid this problem.
+Accelerate tries to capture the different options via the |Boundary| type.
+\begin{code}
+data Boundary a
+  = Clamp       -- ^clamp coordinates to the extent of the array
+  | Mirror      -- ^mirror coordinates beyond the array extent
+  | Wrap        -- ^wrap coordinates around on each dimension
+  | Constant a  -- ^use a constant value for outlying coordinates
+\end{code}
+They can be divided into 2 groups.
+All except |Constant| rely on index manipulation.
+|Constant| on the other hand does no read at all if the read would be out of bounds.
+I use a single function |access| to deal with all of these cases.
+The returned value is a the value read at the given index modulo the boundary condition.
+I start by applying the offset to the index.
+\begin{code}
+access bndy sh ix arr off = do
+  ix' <- zipWithM (add int) ix off
+\end{code}
+This gives me the correct cell to do the read on.
+Then I group the Boundary into |Constant| and the rest.
+In this step I also replace the boundary with its corresponding handler function.
+\begin{code}
+  let op = case bndy of
+        Constant as -> Left as
+        Clamp       -> Right clamp
+        Mirror      -> Right mirror
+        Wrap        -> Right wrap
+\end{code}
+Now all is left is to do the boundary checks and the read.
+In case of |Clamp|, |Mirror| and |Wrap| this is straight forward.
+\begin{code}
+  case op of
+    Right op' -> do
+      ix'' <- op' sh ix'
+      i <- intOfIndex sh ix''
+      readArray arr i
+\end{code}
+In case of |Constant| however this is a little more complicated.
+\begin{code}
+    Left as -> do
+      as'       <- as
+      i         <- intOfIndex sh ix'
+      xs        <- readArray arr i
+      c         <- inRange sh ix'
+      zipWithM (\a x -> instr (typeOfOperand a) (Select c x a [])) as' xs
+\end{code}
+I prepare both the constant and the read value.
+I then do the bounds check and select either value depending on the result.
+This approach vectorizes nicely, as the reads are not dependent on the index.
+It is however not legal as I read out of bounds.
+I wasn't able to construct an example, but this has the potential to segfault.
+This should be changed in future work.
+
+The complete stencil is then constructed via the function |stencilAccess|.
+\begin{code}
+stencilAccess
+  :: forall a b sh aenv stencil. (Shape sh, Stencil sh a stencil)
+  => Proxy (stencil,a)
+  -> Proxy sh
+  -> [Operand]
+  -> [Operand]
+  -> Boundary (IRExp aenv a)
+  -> IRFun1 aenv (sh -> stencil)
+stencilAccess _ _ sh arr bndy ix = do
+  let off     = offsets (undefined :: Fun aenv (stencil -> a))
+                        (undefined :: OpenAcc aenv (Array sh a))
+      off'    = map (map (constOp . num int) . reverse . shapeToList) off
+  stencil <- mapM (access bndy sh ix arr) off'
+  return (concat stencil)
+\end{code}
+The |Proxy| values immediately look out of place.
+It seems that the types are already present in the |Boundary| and the result type.
+Unfortunately this isn't true however, as those are just type synonyms.
+Apart from this oddity, there isn't much happening in this function.
+It mainly combines existing offsets and applies the |access| function.
+
+All that remains now is the actual skeleton code.
+This looks very similar to the |map| skeleton.
+\begin{code}
+  makeKernelQ "stencil" [llgM|
+    define void @stencil
+    (
+        $params:paramGang,
+        $params:paramIn,
+        $params:paramOut,
+        $params:paramEnv
+    )
+    {
+        for $type:intType %i in $opr:start to $opr:end
+        {
+            $bbsM:(ix .=. indexOfInt shOut i)
+            $bbsM:(x .=. (stencilAccess stencilT shT shIn arrIn bndy ix >>= apply))
+            $bbsM:(writeArray arrOut i x)
+        }
+        ret void
+    }
+  |]
+\end{code}
+The code for |stencil2| is analogous.
+
+\subsection{vectorization}
+If the stencil code vectorizes depends heavily on the boundary used.
+At the moment the |Constant| performs best.
+This is achieved however by tolerating out of bounds reads which can potentially segfault.
+The others all prohibit vectorized reads by potentially manipulating the index.
+One optimization here would be to treat 2 different cases.
+If the whole stencil is guaranteed to be in bounds, the bounds check can be omitted.
+This way the read is guaranteed to vectorize.
+This is done by the CUDA backend as well.
+The benefit of this optimization will however not be as great as with the CUDA version.
+CPUs suffer much less from random memory access than GPUs.
 
 \chapter{Conclusion}
 \section{Benchmarks}
-\section{Related Work}
+\subsection{block scholes}
+\includegraphics{images/benchmarks/black-scholes/black-scholes}
+\subsection{canny}
+\includegraphics{images/benchmarks/canny/canny}
+\subsection{dotp}
+\includegraphics{images/benchmarks/dotp/dotp}
+\subsection{floyd-warshal}
+\includegraphics{images/benchmarks/floyd-warshall/floyd-warshall}
+\subsection{fluid flow}
+\includegraphics{images/benchmarks/fluid/fluid}
+\subsection{k-means}
+\includegraphics{images/benchmarks/k-means/k-means}
+\subsection{nbody}
+\includegraphics{images/benchmarks/nbody/nbody}
+\subsection{ray}
+\includegraphics{images/benchmarks/ray/ray}
+\subsection{smvm}
 
+\section{Related Work}
+\todo{related work}
 
 \appendix
 %\chapter{Listings}
