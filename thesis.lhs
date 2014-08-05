@@ -1397,6 +1397,10 @@ class Skeleton arch where
   ...
 \end{code}
 Each of the different functions in this class corresponds to a specific skeleton.
+
+When implementing parallel algorithms, it often becomes more complicated.
+Accelerate was specifically designed to only consist of operations that can be implemented efficiently.
+
 In the following, I will go through the skeletons one by one.
 \section{generate}
 The simplest skeleton is |generate|.
@@ -1430,10 +1434,10 @@ The last piece before the actual code are some declarations for used types and l
       ix       = locals (undefined::sh) "ix"
 \end{code}
 The rest is then relatively self-explaining.
-\begin{code}
+\begin{lstlisting}
   in
-  makeKernelQ "generate" [llgM|
-    define void @generate
+  makeKernelQ "generate" [llgM||
+    define void @@generate
     (
         $params:paramGang,
         $params:paramOut,
@@ -1451,14 +1455,13 @@ The rest is then relatively self-explaining.
         }
         ret void
     }
-  |]
-\end{code}
+  ||]
+\end{lstlisting}
 \subsection{vectorization}
-|generate| usually vectorizes fairly well if the supplied function is vectorizable.
+If |generate| vectorizes is very dependent on the supplied function.
 A function which randomly references a different manifest array would not vectorize for example.
-The multidimensional indices are the challenging part for the optimizer.
-They are generated via a series of modulo operations.
-These can be easily vectorized on modern CPUs however.
+The challinging part for the optimizer are the multidimensional indices.
+This means the chance of vectorization is much higher if the target is just a vector.
 
 \section{map}
 |map| works similar to |generate|.
@@ -1467,11 +1470,18 @@ One important difference between |generate| and |map| is how they access the arr
 |generate| works with multidimensional indices.
 This is not necessary with |map| however, as |map| keeps indices identical.
 
+\begin{code}
+mkMap :: forall t aenv sh a b. (Elt b, Elt a)
+      => Gamma aenv
+      -> IRFun1    aenv (a -> b)
+      -> IRDelayed aenv (Array sh a)
+      -> CodeGen [Kernel t aenv (Array sh b)]
+\end{code}
 The following is the core part of the |map| skeleton.
 I omit the rest of the function as the difference to |generate| is mostly mechanical.
-\begin{code}
-makeKernelQ "map" [llgM|
-    define void @map
+\begin{lstlisting}
+makeKernelQ "map" [llgM||
+    define void @@map
     (
         $params:paramGang,
         $params:paramOut,
@@ -1486,61 +1496,395 @@ makeKernelQ "map" [llgM|
         }
         ret void
     }
-  |]
+  ||]
+\end{lstlisting}
+
+\subsection{vectorization}
+|map| vectorizes far better than |generate|.
+If the supplied array is manifest, no index conversion is necessary.
+If the function doesn't contain branches, then it is very likely that vectorization is possible.
+
+\section{transform}
+|transform| is closely related to map.
+The difference is, that the index is not preserved.
+Instead there is another function which projects an index in the target array into an index in the source array.
+\begin{code}
+defaultTransform
+    :: (Shape sh, Shape sh', Elt a, Elt b, Skeleton arch)
+    => arch
+    -> Gamma aenv
+    -> IRFun1    aenv (sh' -> sh)
+    -> IRFun1    aenv (a -> b)
+    -> IRDelayed aenv (Array sh a)
+    -> CodeGen [Kernel arch aenv (Array sh' b)]
+\end{code}
+In fact |map| can be easily implemented using transform:
+\begin{code}
+defaultMap arch aenv f a = transform arch aenv return f a
+\end{code}
+We keep a seperate implementation of |map| however for performance reasons.
+The specific reason for this is that |map| preserves the the indices.
+Since |transform| doesn't have this property, we simply implement it in terms of |generate|.
+\begin{code}
+defaultTransform arch aenv p f IRDelayed{..} =
+  generate arch aenv $ \ix -> do
+    ix' <- p ix
+    a   <- delayedIndex ix'
+    f a
 \end{code}
 
 \subsection{vectorization}
-|map| vectorizes even better than |generate|.
-If the supplied array is manifest, no index conversion is necessary.
-This way even the memory reads can be done vectorized.
+If |transform| vectorizes is very dependent on the functions involved.
+In case of a simple identity (|map|) it will vectorize just fine.
+It is however really not at all guaranteed, that it will vectorize.
+A simple counter example is the following.
+\begin{code}
+let a0 = use (Array (Z :. 10) [1,2,3,4,5,6,7,8,9,10])
+in backpermute (Z :. 10) (\x0 -> Z :. mod (1 + (indexHead x0),indexHead (shape a0))) a0
+\end{code}
+All this code does is rotate the array to the right by one element and then adding one.
+This code, if optimized by hand, could be easily vectorized.
+
+To give another positive example, let's look at the reversal of an array.
+\begin{code}
+let a0 = use (Array (Z :. 10) [1,2,3,4,5,6,7,8,9,10])
+in transform
+     (shape a0) (\x0 -> Z :. -1 + ((indexHead (shape a0)) - (indexHead x0))) (\x0 -> 1 + x0) a0
+\end{code}
+This vectorizes just fine.
+LLVM uses \lstinline{shufflevector} to achieve this.
+\begin{lstlisting}
+...
+%reverse = shufflevector <4 x i64> %wide.load, <4 x i64> undef, <4 x i32> <i32 3, i32 2, i32 1, i32 0>
+...
+\end{lstlisting}
+
+\subsection{backpermute}
+Accelerate handles a special case of |transform| as |backpermute|.
+This is essentially just a transform without the map functionality.
+We don't have a specific implementation of |backpermute|, but rather use |transform|.
+\begin{code}
+defaultBackpermute
+    :: (Shape sh, Shape sh', Elt e, Skeleton arch)
+    => arch
+    -> Gamma aenv
+    -> IRFun1    aenv (sh' -> sh)
+    -> IRDelayed aenv (Array sh e)
+    -> CodeGen [Kernel arch aenv (Array sh' e)]
+defaultBackpermute arch aenv p a = transform arch aenv p return a
+\end{code}
+
+\section{permute}
+|permute| is analog to |backpermute|.
+Instead of projecting every cell of the target array onto a cell in the source array, the opposite is done.
+Every cell in the source array is projected onto one or no cell in the target array.
+There is no assumption being made about this projection.
+This means there can be either multiple or no cell pointing to a single output cell.
+To deal with no projection the output array is initialized with a given array.
+To deal with multiple cells, there is a function to combine the existing value with the new one.
+\begin{code}
+mkPermute
+    :: forall arch aenv sh sh' e. (Shape sh, Shape sh', Elt e)
+    => Gamma aenv
+    -> IRFun2 aenv (e -> e -> e)
+    -> IRFun1 aenv (sh -> sh')
+    -> IRDelayed aenv (Array sh e)
+    -> CodeGen [Kernel arch aenv (Array sh' e)]
+\end{code}
+
+To get the values, the loop goes over all the elements in the source array.
+This is then projected into the target array.
+\begin{lstlisting}
+  makeKernelQ "permute" [llgM||
+    define void @@permute
+    (
+        $params:paramGang,
+        $params:paramBarrier,
+        $params:paramOut,
+        $params:paramEnv
+    )
+    {
+        for $type:intType %i in $opr:start to $opr:end
+        {
+            $bbsM:(ix .=. indexOfInt shOut i)
+            $bbsM:(ix' .=. permute ix)
+...
+            }
+        }
+        ret void
+    }||]
+\end{lstlisting}
+There is however an option that the index is not projected at all.
+This is signalled by a magic value |ignore|.
+In this case the inner loop is empty.
+\begin{lstlisting}
+            ;; If this index will not be used, jump immediately to the exit
+            $bbsM:(c1 .=. all (uncurry (neq int)) (zip ix' ignore))
+            if %c1 {
+...
+            }
+\end{lstlisting}
+If the value is not ignored, the permutation step will be executed.
+\begin{lstlisting}
+                $bbsM:(old .=. readArray arrOut dst)
+                $bbsM:(new .=. delayedLinearIndex [i])
+                $bbsM:(val .=. combine new old)
+                $bbsM:(writeArray arrOut dst val)
+\end{lstlisting}
+This would be enough in a single-threaded context.
+In a multi-threaded context this is not enough however.
+In that case, this central step is a critical section.
+This means it has to be executed atomically.
+To achieve this, we have a vector of essentially booleans.
+This vector has an element for every element of the result array.
+We use special atomic memory operation to use these for a spinlock.
+
+First we have to determine the specific memory cell to use.
+\begin{lstlisting}
+                %baddr = getelementptr i8* $opr:barrier, $type:intType $opr:dst
+\end{lstlisting}
+With this, we can now look at the the lock is taken.
+\begin{lstlisting}
+                %c2 = i1 true
+                while %c2 {
+                    %lock = atomicrmw volatile xchg i8* %baddr, i8 1 acq_rel
+                    %c2 = icmp eq i8 %lock, 0
+                }
+\end{lstlisting}
+|atomicrmw volatile xchg| excanges the current value with a new value and returns the old one.
+This way we know if the lock was taken before or not.
+|volatile| signals that the operations can't be reordered.
+This pattern is common enough, that modern CPUs have optimizations in place.
+The associated cache line will be shared between all CPUs/cores.
+This was there is no unnecessary bus traffic.
+
+The lock release is less involved.
+\begin{lstinline}
+                store atomic volatile i8 0, i8* %baddr release, align 1
+\end{lstinline}
+It is possible to use a regular store here.
+This will be translated into just a MOV instruction.
+This is possible due to subtle memory ordering rules which allow this, even though MOV is not a full memory barrier.
+In case of other architectures like ARM a MOV is not sufficient here.
+
+\subsection{vectorization}
+Vectorization is not possible in case of |permute|.
+In every step, the same cell in the output array is both read and written.
+The only way this could possibly vectorize is if this index was predictable.
+
+That said, the current implementation cannot possibly vectorize.
+What blocks the vectorization is the synchronization via spinlocks.
+It may be beneficial to supply an additional implementation for single-threaded execution.
+This would not need the extra array of semaphores.
+I leave this evaluation for future work.
 
 \section{fold}
-The |fold| skeleton is different to the others
+In Haskell, a fold reduces a list to a single value.
+The equivalent would be to reduce a vector to a scalar.
+While Accelerate also supports this, it has a more general view.
+It is possible to also reduce an Array of arbitrary dimensionality.
+The result will then be an array with it's inner dimension reduced.
+
+\begin{code}
+mkFold
+    :: forall t aenv sh e. (Shape sh, Elt e)
+    => Gamma aenv
+    -> IRFun2    aenv (e -> e -> e)
+    -> IRExp     aenv e
+    -> IRDelayed aenv (Array (sh:.Int) e)
+    -> CodeGen [Kernel t aenv (Array sh e)]
+\end{code}
+
+The natural unit of computation for a fold is one element in the output array.
+This degree of parallelism can be achieved without multiple passes.
+\begin{lstlisting}
+  makeKernelQ "fold" [llgM||
+    define void @@fold
+    (
+        $params:paramGang,
+        $params:paramStride,
+        $params:paramOut,
+        $params:paramEnv
+    )
+    {
+      %sz = mul $type:intType $opr:start, $opr:n
+
+      for $type:intType %sh in $opr:start to $opr:end
+      {
+          %next = add $type:intType %sz, $opr:n
+          $bbsM:(x .=. seed)
+
+        reduce:
+          for $type:intType %i in %sz to %next
+          {
+              $bbsM:(y .=. delayedLinearIndex [i])
+              $bbsM:(x .=. combine x y)
+          }
+
+          $bbsM:(writeArray arrOut sh x)
+          %sz = $type:intType %next
+      }
+      ret void
+    }
+  ||]
+\end{lstlisting}
+This works great if the output still has a dimension left.
+If the output is a skalar however, it doesn't work that well.
+Instead, the array is reduced in multiple steps.
+The first step is to create an array of partial sums.
+This array can then be reduced by a single thread sequentially.
+
+\subsection{segmented fold}
+The segmented fold is a generalization of the regular fold.
+The regular fold reduces the inner dimension to a single value.
+The segmented fold reduces segments of the inner dimension into single values.
+This way the dimensionality of the resulting array is the same as the incoming array.
+The degree of parallelism is increased by the same amount as there are segments.
+
+\subsection{vectorization}
+In general, fold doesn't vectorize very well.
+|fold| requires it's input function to be associative.
+For LLVMs loop vectorization to work however, it also needs to be commutative.
+Many associative functions are also commutative however.
+This means that these cases will vectorize well.
 
 \section{scan}
-\cite{ladner1980parallel}
-My plan is the following:
+Scan (or prefix sum) is closely related to fold.
+Instead of just providing one value at the end however, it produces all the values in between.
+In contrast to fold, scan only operates on vectors.
+This makes implementation somewhat easier, as there is no special case for this as with |foldAll|.
+Scan also comes in different flavours: |scanl|, |scanr|, |scanl'| and |scanr'|.
+I will focus only on |scanl| here, as the differences are mostly mechanical.
 
+\begin{code}
+mkScanl
+    :: forall t aenv e. (Elt e)
+    => Gamma aenv
+    -> IRFun2    aenv (e -> e -> e)
+    -> IRExp     aenv e
+    -> IRDelayed aenv (Vector e)
+    -> CodeGen [Kernel t aenv (Vector e)]
+\end{code}
+
+As with |fold|, the implementation of prefix sums differs between non-parallel and parallel.
+Scan is difficult to implement as a parallel algorithm.
+Every element depends on its direct predecessor.
+The approach I took was:
+
+\begin{enumerate}
+\item divide the array into chunks
+\item build the sum of each chunk
+\item build the prefix sums over those sums
+\item use the prefix sums as starting point to build the final array
+\end{enumerate}
+
+This approach requires 2 read operation and 1 write operation asymptotically.
+I decided to build combine the last 2 steps into one.
+The last step is done completely in parallel, so this leads to some extra work.
+Depending on the size of the array this may be faster as calling into a kernel has some overhead.
+I leave this evaluation for future work.
+
+The first 2 steps of the process are basically identical to the multidimensional fold.
+The rest forms one big kernels, as I essentially combine 2 separate operations into one.
+
+First look at the function parameters.
 \begin{lstlisting}
-void scan(double* in, double* out, double* tmp, unsigned length, unsigned start, unsigned end, unsigned tid) {
-  double acc = 0;
-  if (end==length) {
-    tmp[0] = 0;
-  } else {
-    for (unsigned i=start;i<end;i++) {
-      acc += in[i];
+  makeKernelQ "scanl" [llgM||
+    define void @@scanl
+    (
+        $params:paramGang,
+        $type:intType %lastChunk,
+        $type:intType %chunkSize,
+        $type:intType %sz,
+        $params:paramTmp,
+        $params:paramOut,
+        $params:paramEnv
+    )
+    {
+        for $type:intType %i in $opr:start to $opr:end
+        {
+...
+        }
+        ret void
     }
-    tmp[tid+1] = acc;
-  }
-  printf("block");
-  acc = tmp[tid];
-  for (unsigned j=start;j<end;j++) {
-    acc += in[j];
-    out[j] = acc;
-  }
-}
-
-void scanAlt(double* in, double* out, unsigned length, unsigned start, unsigned end) {
-  double acc = 0;
-  for (unsigned j=start;j<end;j++) {
-    acc += in[j];
-    out[j] = acc;
-  }
-  printf("block");
-  double add=0;
-  if (start>0) {
-    add = out[start-1];
-  }
-  for (unsigned i=start;i<end;i++) {
-    out[i] += add;
-  }
-}
+  ||]
 \end{lstlisting}
+The gang parameters (start, stop) in this case are measured not in single elements, but in chunks.
+The size of these chunks is given by \lstinline{%chunksize}.
+The total length and the number of chunks is also provided.
+This is necessary to handle the last chunk as it is not of full length.
+
+The first step then is the scan over the previously computed sums.
+The seed element is also written to the first array index in this step.
+\begin{lstlisting}
+            ;; sum up the partial sums to get the first element
+            $bbsM:(acc .=. seed)
+
+            for $type:intType %k in 0 to %i
+            {
+                $bbsM:(x .=. delayedLinearIndex tmpD [k])
+                $bbsM:(acc .=. combine x acc)
+            }
+
+            ;; check if this is the first chunk
+            %c2 = icmp eq $type:intType %i, 0
+            ;; if it is, write the seed to memory
+            if %c2 {
+                %c3 = icmp ne $type:intType %sz, 0
+                if %c3 {
+                    $bbsM:(writeArray arrOut zero acc)
+                }
+            }
+\end{lstlisting}
+The outer loop just gives the chunk number.
+This has to be converted into a usable range first.
+\begin{lstlisting}
+            ;; calculate the start of the current chunk
+            %ix    = mul $type:intType %i,  %chunkSize
+            ;; Determine the end of the current chunk. If this is the last chunk,
+            ;; then this is the same as the end of the array.
+            %last1 = add $type:intType %ix, %chunkSize
+            %c1    = icmp eq $type:intType %i, %lastChunk
+            %last  = select i1 %c1, $type:intType %sz, $type:intType %last1
+\end{lstlisting}
+With the correct range and the prefixsum of all previous elements, the rest is easy.
+\begin{lstlisting}
+          reduce:
+            for $type:intType %k in %ix to %last
+            {
+                %k1 = add $type:intType %k, 1
+                $bbsM:(x .=. delayedLinearIndex inD [k])
+                $bbsM:(acc .=. combine acc x)
+                $bbsM:(writeArray arrOut k1 acc)
+            }
+\end{lstlisting}
+
+I didn't define a seperate function for the sequential case.
+It is easy though to use the exact same function as above though.
+It is only necessary to supply an empty array of precalculated sums.
+This way the scan over that array yields the just seed element.
+This is then used to compute the prefix sum directly.
+
+\subsection{vectorization}
+The steps equivalent to a fold vectorize very well.
+The this is in essence all but the last step.
+The actual prefix sum cannot be vectorized, as all the intermediate values have to be written to memory.
 
 \section{stencil}
 Stencil operations are basically a generalization of map.
 The difference is that the focus is not on a single element.
 Instead it also looks at the surrounding cells.
+
+\begin{code}
+mkStencil
+  :: forall arch aenv sh stencil a b. (Elt b, Stencil sh a stencil)
+  => Gamma aenv
+  -> Proxy (stencil,a)
+  -> IRFun1 aenv (stencil -> b)
+  -> Boundary (IRExp aenv a)
+  -> CodeGen [Kernel arch aenv (Array sh b)]
+\end{code}
+
 This is leads to a problem however.
 While |map| is always guaranteed to read in bounds, this can't be said about stencils.
 There are multiple ways to avoid this problem.
@@ -1594,8 +1938,7 @@ I prepare both the constant and the read value.
 I then do the bounds check and select either value depending on the result.
 This approach vectorizes nicely, as the reads are not dependent on the index.
 It is however not legal as I read out of bounds.
-I wasn't able to construct an example, but this has the potential to segfault.
-This should be changed in future work.
+This has the potential to segfault and should be changed in future work.
 
 The complete stencil is then constructed via the function |stencilAccess|.
 \begin{code}
@@ -1616,15 +1959,15 @@ stencilAccess _ _ sh arr bndy ix = do
 \end{code}
 The |Proxy| values immediately look out of place.
 It seems that the types are already present in the |Boundary| and the result type.
-Unfortunately this isn't true however, as those are just type synonyms.
+They are necessary however, as those are just type synonyms.
 Apart from this oddity, there isn't much happening in this function.
 It mainly combines existing offsets and applies the |access| function.
 
 All that remains now is the actual skeleton code.
 This looks very similar to the |map| skeleton.
-\begin{code}
-  makeKernelQ "stencil" [llgM|
-    define void @stencil
+\begin{lstlisting}
+  makeKernelQ "stencil" [llgM||
+    define void @@stencil
     (
         $params:paramGang,
         $params:paramIn,
@@ -1640,21 +1983,17 @@ This looks very similar to the |map| skeleton.
         }
         ret void
     }
-  |]
-\end{code}
+  ||]
+\end{lstlisting}
 The code for |stencil2| is analogous.
 
 \subsection{vectorization}
-If the stencil code vectorizes depends heavily on the boundary used.
-At the moment the |Constant| performs best.
-This is achieved however by tolerating out of bounds reads which can potentially segfault.
-The others all prohibit vectorized reads by potentially manipulating the index.
-One optimization here would be to treat 2 different cases.
-If the whole stencil is guaranteed to be in bounds, the bounds check can be omitted.
-This way the read is guaranteed to vectorize.
+The stencil code doesn't vectorize at all at the moment.
+The reason for this is the boundary.
+If the whole stencil is guaranteed to be in bounds, the bounds check could be omitted however.
+This way the read would be guaranteed to vectorize.
 This is done by the CUDA backend as well.
-The benefit of this optimization will however not be as great as with the CUDA version.
-CPUs suffer much less from random memory access than GPUs.
+The benefit of this optimization will however not be as great as with the CUDA version as CPUs suffer much less from random memory access than GPUs.
 
 \chapter{Conclusion}
 \section{Benchmarks}
