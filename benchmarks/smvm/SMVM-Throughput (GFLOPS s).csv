@@ -1,0 +1,15 @@
+,Accelerate,Acc (+fusion),CUSP,CUSPARSE
+Dense,5.82,15.55,11.18,0.06
+Protein,3.89,7.59,4.16,0.03
+FEM/Spheres,1.92,4.93,3.67,0.04
+FEM/Cantilever,2.37,4.46,3.37,0.94
+Wind Tunnel,1.40,3.99,3.80,0.02
+FEM/Harbour,3.60,6.70,7.03,0.02
+QCD,3.03,5.07,5.45,0.02
+FEM/Ship,1.82,4.03,3.61,0.08
+Economics,0.61,0.97,2.91,0.04
+Epidemiology,0.29,0.64,5.62,0.74
+FEM/Accelerator,1.20,1.72,2.12,0.04
+Circuit,0.60,0.87,3.24,0.01
+Webbase,0.20,0.50,2.01,0.01
+LP,3.64,5.08,5.16,0.07

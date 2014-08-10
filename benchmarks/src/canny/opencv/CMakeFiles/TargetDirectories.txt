@@ -1,0 +1,2 @@
+/home/tvh/git/accelerate-thesis/benchmarks/src/canny/opencv/CMakeFiles/canny.dir
+/home/tvh/git/accelerate-thesis/benchmarks/src/canny/opencv/CMakeFiles/canny-gpu.dir

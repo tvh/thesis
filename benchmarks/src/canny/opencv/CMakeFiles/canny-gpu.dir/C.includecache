@@ -1,0 +1,18 @@
+#IncludeRegexLine: ^[ 	]*#[ 	]*(include|import)[ 	]*[<"]([^">]+)([">])
+
+#IncludeRegexScan: ^.*$
+
+#IncludeRegexComplain: ^$
+
+#IncludeRegexTransform: 
+
+/home/tvh/git/accelerate-thesis/benchmarks/src/canny/opencv/Timing.c
+sys/time.h
+-
+sys/resource.h
+-
+stdio.h
+-
+stdlib.h
+-
+

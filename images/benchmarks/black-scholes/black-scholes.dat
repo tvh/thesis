@@ -1,0 +1,13 @@
+# Black Scholes on Tesla T10.
+#  Kernel execution times only, excludes time for data transfer.
+# Number of options (M), Accelerate (ms), Accelerate (+sharing) (ms), CUDA (ms)
+2	11.633	        0.63	        0.68
+4	23.181	        1.2437	        1.3505
+6	34.730	        1.8621	        2.0168
+8	46.275	        2.4807	        2.6856
+10	57.837	        3.0989	        3.3529
+12	69.401	        3.7175	        4.0229
+14	80.973	        4.3357	        4.6897
+16	92.488	        4.9537	        5.3580
+18	104.08	        5.5717	        6.0260
+20	115.64	        6.1900	        6.6945

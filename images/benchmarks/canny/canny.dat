@@ -1,0 +1,11 @@
+# Canny edge detection, on Tesla T10.
+# Image size, Repa -N8, Accelerate (kernels), Accelerate + wildfire, OpenCV (CPU), OpenCV (GPU)
+#
+256 5.987546    6.04037
+512 13.04046    16.45571
+768 17.75271    29.0739
+1024    26.95408    42.06149
+1536    58.06245    78.82722
+2048    88.14658    116.998
+3072    181.4848    267.8171
+4096    311.8063    332.8409

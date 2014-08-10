@@ -101,7 +101,7 @@
 
 \vspace{2cm}
 
-{\Large \textbf{An LLVM Backend for Accelerate}}
+{\Large \textbf{Generating LLVM IR using Template Meta Programming in Haskell}}
 
 \vspace{1.75cm}
 
@@ -134,8 +134,7 @@ Kiel, \today
 
 \chapter*{Selbstständigkeitserklärung}
 
-Ich erkläre hiermit, dass ich die vorliegende Arbeit selbstständig und nur unter
-Verwendung der angegebenen Literatur und Hilfsmittel angefertigt habe.
+Ich erkläre hiermit, dass ich die vorliegende Arbeit selbstständig und nur unter Verwendung der angegebenen Literatur und Hilfsmittel angefertigt habe.
 
 
 \today
@@ -147,7 +146,7 @@ Timo von Holtz
 % oder auch manuell
 
 \chapter*{Abstract}
-Implementing parallel computations is traditionally done in C or FORTRAN.
+Implementing parallel computations is traditionally done in low level languages like C or FORTRAN.
 This allows great control over the details of execution.
 Unfortunately, this also comes with the complexities of using a low-level language.
 To make this easier, \citeauthor{chakravarty2011accelerating} have developed Accelerate, an embedded array language for computations for high-performance computing in Haskell.
@@ -421,7 +420,7 @@ Available flags are\cite{llvmref}:
 \end{itemize}
 
 \subsection{llvm-general}
-There are multiple bindings to LLVM in Haskell.
+To use LLVM from Haskell, there are multiple options.
 The most complete is llvm-general.\cite{scarlet2013llvm}
 Instead of exposing the LLVM API directly, it uses an ADT to represent LLVM IR.
 This can then be translated into the corresponding C++ object.
@@ -438,7 +437,6 @@ Using |CuratedPassSetSpec| is the easier option of the 2.
 It offers a similar level of control as specifying @-On@ at the command line.
 Using |PassSetSpec| gives much more control over the exact passes run, but you have to specify them one by one.
 Both of these specs also come with fields to specify information about the target.
-
 
 \section{Accelerate}
 Accelerate\cite{chakravarty2011accelerating,mcdonelloptimising} is an an embedded array language for computations for high-performance computing in Haskell.
@@ -686,40 +684,9 @@ As a consequence, they can't be defined locally or passed in as function argumen
 Not having this restriction would lead to Haskell not being type safe.
 
 \chapter{Contributions}
-\todo{write intro to contribution chapter}
-
-\section{accelerate}
-While testing some of the skeletons, in particular the first stage of |scanl|, I had trouble with lost writes.
-These happened only if multiple threads wrote to adjacent memory locations.
-Normally this behaviour should be prevented by cache coherency protocols.
-These, however can be disabled if the memory involved is believed to be constant.
-
-The Internal representation of |Array|s in Accelerate uses a |UArray| to store it's data.
-This type of Array is uses a |ByteArray#|, which is assumed to be constant.
-Switching the representation from |UArray| to |StorableArray| fixed the problem.
-
-\section{llvm-general}
-llvm-general offers a nice set of bindings to the LLVM API.
-It is not feature-complete however.
-One area where I could make an improvement on this is the optimization.
-The sole difference between the |PassSetSpect| and |CuratedPassSetSpec| should be the way they define passes.
-The |CuratedPassSetSpec| however was lacking important fields for data layout and target machine.\footnote{\url{https://github.com/bscarlet/llvm-general/pull/101}}
-Also, they were mostly ignored when supplied to the |PassSetSpec|.\footnote{\url{https://github.com/bscarlet/llvm-general/issues/91}}
-In the process, I also added support for loop and slp vectorization to |CuratedPassSetSpec|.
-
-Another issue was the lack of support for fast-math flags.\footnote{\url{https://github.com/bscarlet/llvm-general/issues/90}}
-They are now supported with the following datatype:
-\begin{code}
-data FastMathFlags
-  = NoFastMathFlags
-  | UnsafeAlgebra
-  | FastMathFlags {
-      noNaNs :: Bool,
-      noInfs :: Bool,
-      noSignedZeros :: Bool,
-      allowReciprocal :: Bool
-    }
-\end{code}
+Before we look at the intricate details I want to summarize the contributions I made.
+First is of course my approach to generate LLVM code via template meta programming.
+While working with accelerate-llvm, I discovered a few additional obstacles however, which I will also present here.
 
 \section{llvm-general-quote}
 When writing a compiler using LLVM in Haskell there is a good tutorial on how to do it at \citeurl{diehl2014jit}.
@@ -773,7 +740,7 @@ It actually goes further, as it also typechecks the produced code.
 
 I propose a third approach using quasiquotation\cite{mainland2007quote}.
 The idea behind quasiquotation is, that you can define a DSL with arbitrary syntax, which you can then directly transform into Haskell data structures.
-This is done at compile-time, so you get the same type safety as writing the AST by hand.
+This is done at compile-time, so you get the same type safety as you would writing the AST by hand.
 
 \begin{figure}
 \begin{lstlisting}
@@ -953,18 +920,54 @@ These are the additions I made to the syntax:
  \item for: \lstinline!for <ty> <var> in <val1> ( to || downto ) <val2> { <instructions> }!
 \end{itemize}
 
+\section{accelerate}
+While testing some of the skeletons, in particular the first stage of |scanl|, I had trouble with lost writes.
+These happened only if multiple threads wrote to adjacent memory locations.
+Normally this behaviour should be prevented by cache coherency protocols.
+These, however can be disabled if the memory involved is believed to be constant.
+
+The Internal representation of |Array|s in Accelerate uses a |UArray| to store it's data.
+This type of Array is uses a |ByteArray#|, which is assumed to be constant.
+Switching the representation from |UArray| to |StorableArray| fixed the problem.
+
+\section{llvm-general}
+llvm-general offers a nice set of bindings to the LLVM API.
+It is not feature-complete however.
+One area where I could make an improvement on this is the optimization.
+The sole difference between the |PassSetSpect| and |CuratedPassSetSpec| should be the way they define passes.
+The |CuratedPassSetSpec| however was lacking important fields for data layout and target machine.\footnote{\url{https://github.com/bscarlet/llvm-general/pull/101}}
+Also, they were mostly ignored when supplied to the |PassSetSpec|.\footnote{\url{https://github.com/bscarlet/llvm-general/issues/91}}
+In the process, I also added support for loop and slp vectorization to |CuratedPassSetSpec|.
+
+Another issue was the lack of support for fast-math flags.\footnote{\url{https://github.com/bscarlet/llvm-general/issues/90}}
+They are now supported with the following datatype:
+\begin{code}
+data FastMathFlags
+  = NoFastMathFlags
+  | UnsafeAlgebra
+  | FastMathFlags {
+      noNaNs :: Bool,
+      noInfs :: Bool,
+      noSignedZeros :: Bool,
+      allowReciprocal :: Bool
+    }
+\end{code}
+
 \chapter{Implementation}
-\todo{write intro to Implementation chapter}
+In the previous chapter I presented the extent of my work.
+In this chapter I will focus on the details of the Implementation.
 
 \section{Quasiquoter}
 A quasiquoter basically works like a mini compiler.
 You get a string as input and have to generate Haskell code out of that.
 In it's simplest form this would be just a parser.
-But it is not limited to that, since all you need to define for a quasiquoter is a function
+
+It is not limited to that however.
+All you need to define for a quasiquoter is a function
 \begin{code}
 quoteExp :: String -> Q Exp
 \end{code}
-The |Q Exp| in this case is defined by Template Haskell.
+The |Q Exp| in this case is a Template Haskell Expression.
 Since it uses Template Haskell to construct expressions, it is possible to reference variables in scope using antiquotation.
 Figure \ref{fig:quasichart} shows a the design of a typical quasiquoter.
 
@@ -1035,10 +1038,12 @@ class (Applicative m, Monad m) => CodeGenMonad m where
 The |Applicative| context is not necessary since |Monad| is strictly more powerful than |Applicative|.\footnote{With GHC 7.10, |Applicative| will become a superclass of |Monad|.
 In the meantime, all instances of |Monad| should be adapted to also provide an instance of |Applicative|.
 Details can be found at \url{http://www.haskell.org/haskellwiki/Functor-Applicative-Monad_Proposal}.}
-I decided to include it however since it allows for a more concise syntax.
-Using a typeclass instead of a single function has multiple advantages.
+I decided to include it however since it allows for a more concise syntax im my Implementation.
+
+Using a typeclass for the conversion instead of a single function linke in language-c-quote has multiple advantages.
 When there is a case missing, it will complain when the quoter is compiled instead of when it is used.
-This approach relies on typed expressions, which were introduced with GHC 7.8.
+To implement this approach however, the resulting expressions have to be properly typed.
+This was not possible before GHC 7.8.
 
 Here is a simple example of an instance declaration of |QQExp|.
 \begin{code}
@@ -1081,8 +1086,9 @@ When implementing the control structures, I had to decide on what level I wanted
 In a traditional procedural language like C, they would sit alongside the other expressions like assignments or function calls.
 This would correspond to the instructions in LLVM.
 For this to be possible however, I need to be able to extend them into just a sequence of instructions.
-In case of an if-then-else this is still kind of possible using select to get the result value.
-The loop structures however are not possible, as they require an arbitrary number of jumps.
+In case of an if-then-else this would kind of be possible using select to get the result value.
+This is not the intended way however as side effects are still executed.
+Loop structures are an even begger problem, as the number of iterations can be arbitrary.
 
 \subsection{direct approach}
 The solution is to have the control structures on the level of basic blocks.
@@ -1166,7 +1172,7 @@ i32 foo(i32 %m, i32 %n) {
 
 When implementing this, there are a few things that make matters non-trivial.
 Since LLVM doesn't have mutable variables, it is necessary to introduce \lstinline{phi} instructions manually.
-This node has to have a value specified for every incoming block.
+They have to have a value specified for every incoming block.
 First these are the blocks and values specified in the loop header.
 On top this, these are all the blocks inside the loop returning a value.
 The values are then extracted and appended to the existing list.
@@ -1902,9 +1908,15 @@ All except |Constant| rely on index manipulation.
 I use a single function |access| to deal with all of these cases.
 The returned value is a the value read at the given index modulo the boundary condition.
 I start by applying the offset to the index.
+If the offset is 0 in every direction however, the read can be done directly.
 \begin{code}
-access bndy sh ix arr off = do
-  ix' <- zipWithM (add int) ix off
+access bndy sh ix arr off =
+  if all (==0) off
+    then do
+      i <- intOfIndex sh ix
+      readArray arr i
+    else do
+      ix' <- zipWithM (add int . (constOp . num int)) off ix
 \end{code}
 This gives me the correct cell to do the read on.
 Then I group the Boundary into |Constant| and the rest.
@@ -1929,16 +1941,15 @@ In case of |Constant| however this is a little more complicated.
 \begin{code}
     Left as -> do
       as'       <- as
-      i         <- intOfIndex sh ix'
-      xs        <- readArray arr i
+      ix''      <- wrap sh ix'
+      i         <- intOfIndex sh ix''
       c         <- inRange sh ix'
       zipWithM (\a x -> instr (typeOfOperand a) (Select c x a [])) as' xs
 \end{code}
 I prepare both the constant and the read value.
 I then do the bounds check and select either value depending on the result.
-This approach vectorizes nicely, as the reads are not dependent on the index.
-It is however not legal as I read out of bounds.
-This has the potential to segfault and should be changed in future work.
+To avoid out of bounds reads, I wrap the index before I read it.
+This is necessary since it is fairly easy to construct stencil functions that would end in a segfault otherwise.
 
 The complete stencil is then constructed via the function |stencilAccess|.
 \begin{code}
@@ -1995,26 +2006,79 @@ This way the read would be guaranteed to vectorize.
 This is done by the CUDA backend as well.
 The benefit of this optimization will however not be as great as with the CUDA version as CPUs suffer much less from random memory access than GPUs.
 
-\chapter{Conclusion}
+\chapter{Results}
 \section{Benchmarks}
-\subsection{block scholes}
-\includegraphics{images/benchmarks/black-scholes/black-scholes}
-\subsection{canny}
-\includegraphics{images/benchmarks/canny/canny}
-\subsection{dotp}
-\includegraphics{images/benchmarks/dotp/dotp}
-\subsection{floyd-warshal}
-\includegraphics{images/benchmarks/floyd-warshall/floyd-warshall}
-\subsection{fluid flow}
-\includegraphics{images/benchmarks/fluid/fluid}
-\subsection{k-means}
-\includegraphics{images/benchmarks/k-means/k-means}
-\subsection{nbody}
-\includegraphics{images/benchmarks/nbody/nbody}
-\subsection{ray}
-\includegraphics{images/benchmarks/ray/ray}
-\subsection{smvm}
 
+The Benchmarks were run on a dual CPU Xeon E5-2650 (16 cores, 2GHz, 64GB RAM) running GNU/Linux (Ubuntu 12.04 LTS).
+Programs are compiled with ghc-7.8.3 and llvm-3.4.2.
+All programs are executed on all 16 cores unless stated otherwise.
+
+\subsection{Ray Tracer}
+\begin{figure}
+    \centering
+    \includegraphics[width=0.8\textwidth]{images/benchmarks/ray/ray_sample}
+    \caption[Ray tracer]{Image of a ray traced scene rendered on the GPU with
+    Accelerate, featuring multiple reflections. The scene is animated and
+    renders in real time on modest hardware.}
+    \label{fig:ray_sample}
+\end{figure}
+
+Ray tracing is a technique for generating an image by tracing the path of light through pixels in an image plane and simulating the effects of its encounters with virtual objects.
+The technique is capable of producing a very high degree of realism compared to typical scanline rendering methods, as ray tracing algorithms are able to simulate optical effects such as reflection and refraction, scattering, and dispersion phenomena.
+This increased accuracy has a larger computational cost, which is why ray tracing is not typically used for real time rendering applications such as computer games.
+Figure \ref{fig:ray_sample} shows the result of rendering a scene using a ray-tracer implemented in Accelerate.
+The algorithm computes the colour of a pixel by casting a ray from that point in a specified direction, and tracing its interaction with the objects in the scene.
+
+After fusion, this ends up being just a single generate kernel.
+Figure \ref{fig:ray_bench} shows the runtime of the ray-tracer for different image sizes.
+The comparison here is against a Repa implementation of the same algorithm.
+Independent of the image size, the Accelerate version is about 45\% faster than the Repa version.
+\todo{reasoning}
+\begin{figure}
+    \centering
+    \includegraphics[width=0.8\textwidth]{images/benchmarks/ray/ray}
+    \label{fig:ray_bench}
+\end{figure}
+
+Accellerate-llvm has very heavy infrastructure in place to synchronize threads.
+The intuition is, that this might lead to decreased scalability.
+Figure \ref{fig:ray_scale} shows the speedup per core using the raytracer.
+As you can see, Accelerate performs basically identical to Repa in this regard.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.8\textwidth]{images/benchmarks/ray/ray-scale}
+    \label{fig:ray_scale}
+\end{figure}
+
+\subsection{N-Body}
+The $n$-body example simulates the Newtonian gravitational forces on a set of massive bodies in 3D space, using the na\"ive $\mathcal{O}\left( n^{2} \right)$ algorithm.
+In a data-parallel setting, the natural way to express this algorithm is first to compute the forces between every pair of bodies, before adding the forces applied to each body using a segmented sum.
+Figure \ref{fig:nbody} shows the results of this program in different settings.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.8\textwidth]{images/benchmarks/nbody/nbody}
+    \label{fig:nbody}
+\end{figure}
+
+After fusion, this example consists of a |generate| and a |map| kernel.
+Both of these vectorize well.
+This is clear when looking at the difference in runtime between the vectorized and unvectorized kernels executed in a single thread.
+The difference between them is almost a factor of 8, which is the vector width for floats on the benchmark machine.
+
+Another interesting point here is how it performs against an implementation using |Data.Vector|.
+For small sizes, |Data.Vector| is faster than Accelerate.
+This is due to the overhead Accelerate brings to the table.
+For bigger sizes Accelerate is significantly faster however.
+
+When running with @+RTS -N16@, it doesn't scale quite as well as the raytracer for smaller sizes.
+This is likely due to memory transfers.
+The Benchmark machine is a dual CPU server and therefore can't share the on-chip cache between all available cores.
+In fact the runtime is identical whether executed with 8 or 16 cores.
+On very large datasets (>12000 bodies) this is no longer the case and the extra parallelism is noticeable.
+
+\chapter{Conclusion}
 \section{Related Work}
 \todo{related work}
 
