@@ -1,4 +1,4 @@
-\documentclass[a4paper,bibliography=totocnumbered,parskip=half]{scrbook}
+\documentclass[a4paper,bibliography=totocnumbered]{scrbook}
 %include polycode.fmt
 %include greek.fmt
 %include forall.fmt
@@ -206,7 +206,12 @@ dotp xs ys = fold (+) 0 (zipWith (*) xs ys)
 \end{code}
 To run this computation however, there has to be some parallel implementation.
 The implementation presented in the original Accelerate work targets NVIDIA GPUs using CUDA, as those offered the most performance, while being traditionally hard to program.
-Since then, CPUs have improved, with 
+While this is good in a specialized setting where there is a powerful GPGPU available, it is not suitable to accelerate computations on any given machine.
+To use Accelerate in a more general setting, there has been early work on an alternative backend to Accelerate using LLVM.\cite{trevor2014llvm}
+This work includes both a CPU and a GPU backend.
+In this thesis I will develop a novel approach to code generation for LLVM.
+I will use this to implement the missing pieces in the code generation of the native LLVM backend.
+
 
 \chapter{Technologies}
 
