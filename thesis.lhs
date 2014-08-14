@@ -21,6 +21,7 @@
 \usepackage{enumitem}
 \usepackage[section]{placeins}
 \usepackage{tikz}
+\usepackage{setspace}
 \usetikzlibrary{shapes.geometric, arrows}
 
 \lstset{basicstyle=\footnotesize\ttfamily,
@@ -91,7 +92,10 @@
 \tikzstyle{decision} = [diamond, minimum width=3cm, minimum height=1cm, text centered, draw=black, fill=green!30]
 \tikzstyle{arrow} = [thick,->,>=stealth]
 
+\onehalfspace
+
 \begin{document}
+
 \frontmatter
 
 \begin{titlepage}
@@ -164,9 +168,48 @@ I use this quasi-quoter to implement the skeletons in the LLVM backend.
 \mainmatter
 
 \chapter{Introduction}
-\todo{write introduction}
+Processing large amounts of data is becoming more and more important.
+To meet this demand, there have been a number of approaches.
+Since the continuous improvement in speed predicted by Moore's law is no longer possible, newer architectures rely on many parallel cores instead of one.
+This comes at a cost however, as it is no longer possible to use all the power given just by implementing a sequential algorithm.
+
+Most computing-intense calculations can be expressed as operations on arrays.
+This class of problems is addressed by Accelerate\cite{chakravarty2011accelerating,mcdonelloptimising}.
+Accelerate is an an embedded array language for computations for high-performance computing in Haskell.
+
+The way an algorithm is expressed in Accelerate is using a set of combinator functions like |map| or |fold|.
+To give an example, lets look at the dot product of 2 vectors.
+\[
+\begin{pmatrix}
+x_0 \\ ... \\ x_{n-1}
+\end{pmatrix}
+\times
+\begin{pmatrix}
+y_0 \\ ... \\ y_{n-1}
+\end{pmatrix}
+= \displaystyle\sum_{i=0}^{n-1} x_i*y_i
+\]
+
+This can be trivially implemented in Haskell using |foldl'|\footnote{The implementation of |foldl| in Haskell is such, that it will produce large intermediate chunks. |foldl'| is a strict variant, so this doesn't happen.} and |zipWith|.
+\begin{code}
+dotp_list :: [Float] -> [Float] -> Float
+dotp_list xs ys =
+  foldl (+) 0 (zipWith (*) xs ys)
+\end{code}
+This code is purely sequential however and is therefore limited to only one CPU.
+Accelerate allows you to write this computation in nearly exactly the same way.
+\begin{code}
+dotp :: Acc (Vector Float)
+     -> Acc (Vector Float)
+     -> Acc (Scalar Float)
+dotp xs ys = fold (+) 0 (zipWith (*) xs ys)
+\end{code}
+To run this computation however, there has to be some parallel implementation.
+The implementation presented in the original Accelerate work targets NVIDIA GPUs using CUDA, as those offered the most performance, while being traditionally hard to program.
+Since then, CPUs have improved, with 
 
 \chapter{Technologies}
+
 \todo{write intro to Technologies chapter}
 \section{LLVM}
 LLVM\cite{lattner2002llvm} is a compiler infrastructure written in C++.
@@ -920,6 +963,27 @@ These are the additions I made to the syntax:
  \item for: \lstinline!for <ty> <var> in <val1> ( to || downto ) <val2> { <instructions> }!
 \end{itemize}
 
+\subsection{antiquotation}
+An important part of every quasiquoter is the ability to reference other variables in scope.
+The available antiquotations are:
+\begin{itemize}
+\item \$dl: |DataLayout|
+\item \$tt: target triple (|String|)
+\item \$def: |Definition|
+\item \$defs: |[Definition]|
+\item \$bb: |BasicBlock|
+\item \$bbs: |[BasicBlock]|
+\item \$instr: |Named Instruction|
+\item \$instrs: |[Named Instruction]|
+\item \$type: |Type|
+\item \$opr: |Operand|
+\item \$const: |Constant|
+\item \$id: \todo{lookup}
+\item \$gid: \todo{lookup}
+\item \$param: |Parameter|
+\item \$params: |[Parameter]|
+\end{itemize}
+
 \section{accelerate}
 While testing some of the skeletons, in particular the first stage of |scanl|, I had trouble with lost writes.
 These happened only if multiple threads wrote to adjacent memory locations.
@@ -1171,11 +1235,12 @@ i32 foo(i32 %m, i32 %n) {
 \end{lstlisting}
 
 When implementing this, there are a few things that make matters non-trivial.
-Since LLVM doesn't have mutable variables, it is necessary to introduce \lstinline{phi} instructions manually.
-They have to have a value specified for every incoming block.
-First these are the blocks and values specified in the loop header.
-On top this, these are all the blocks inside the loop returning a value.
-The values are then extracted and appended to the existing list.
+Since LLVM doesn't have a concept of mutable variables, it is necessary to introduce \lstinline{phi} instructions manually.
+The values that are modified are the accumulator and the loop counter (\lstinline!%j! and \lstinline!%i! in this example).
+Each \lstinline{phi} instruction needs one value for each incoming block.
+The incoming blocks can be deduced by combining the existing list of incoming values with the return values of block within the loop.
+This naturally gives a complete list for the accumulator value.
+An additional \lstinline{phi} instruction is then inserted to handle the loop counter.
 
 This is relatively straight forward if you were to implement it as a regular Haskell function.
 Working with quasiquoters though, It all has to be implemented in a Template Haskell.
@@ -1187,12 +1252,10 @@ Before GHC 7.8, the expressions inside a quoted block would not be typechecked.
 You would still get type errors for the code.
 Rather than complaining at the definition site it would complain at the usage site however.
 This makes defining complex functions nearly impossible.
-But even with GHC 7.8 you get some warnings when splicing code in rather than where you defined them.
+But even with GHC 7.8 you get some warnings when splicing code in rather than at it's definition site.
 For example, it is not checked if a pattern match is exhaustive.
 Although this check could be done in the type checker, it is done while desugaring to core.
 I filed this as a bug in GHC (\#9113) and it seems that there is work done which would solve this issue.
-
-\todo{write about desugaring}
 
 \subsection{nextblock}
 In principle basic blocks are not ordered.
@@ -1214,6 +1277,52 @@ An example of this can be found in figure \ref{fig:forquote}, page \pageref{fig:
 \item limited functionality
 \item jumpnext
 \end{itemize}
+
+\subsection{antiquotation}
+I have so far ignored how antiquotation is handled.
+When antiquoting a value, it is usually inserted directly into the AST.
+This is straight forward for things like types, constants and operands.
+It would be useful however to also antiquote sequences of code.
+
+The existing code in accelerate-llvm uses the |CodeGen| monad to produce code.
+\begin{code}
+data CodeGenState = CodeGenState
+  { blockChain          :: Seq Block                            -- blocks for this function
+  , symbolTable         :: Map Name AST.Global                  -- global (external) function declarations
+  , metadataTable       :: HashMap String (Seq [Maybe Operand]) -- module metadata to be collected
+  , intrinsicTable      :: HashMap String Name                  -- standard math intrinsic functions
+  , next                :: {-# UNPACK #-} !Word                 -- a name supply
+  }
+  deriving Show
+
+data Block = Block
+  { blockLabel          :: Name                         -- block label
+  , instructions        :: Seq (Named Instruction)      -- stack of instructions
+  , terminator          :: Maybe (Named Terminator)     -- block terminator
+  }
+  deriving Show
+
+newtype CodeGen a = CodeGen { runCodeGen :: State CodeGenState a }
+  deriving (Functor, Applicative, Monad, MonadState CodeGenState)
+\end{code}
+
+This monad collects instructions into unfinished blocks.
+When all blocks are finished, it is then possible to convert these into a list of |BasicBlock|s.
+The interesting return values are of type |Operand| or |[Operand]|.
+To use these in further calculations, they have to be linked to a known value.
+This could be achieved by a function
+\begin{code}
+(.=.) :: Operand -> CodeGen Operand -> CodeGen BasicBlock
+\end{code}
+The first argument has to be a |LocalReference|.
+There is no way to directly assign a value to a name in LLVM without using an additional instruction.
+It is however possible to abuse instructions to do exactly this.
+The \lstinline!select! instruction can be used in this case.
+To do this, both branches of the select have to point to the same value.
+This way the additional instruction can be easily removed via constant propagation.
+
+\todo{example}
+
 
 \subsection{mutable variables}
 Although the above methods work, there are some fundamental problems with them.
@@ -2003,8 +2112,6 @@ The stencil code doesn't vectorize at all at the moment.
 The reason for this is the boundary.
 If the whole stencil is guaranteed to be in bounds, the bounds check could be omitted however.
 This way the read would be guaranteed to vectorize.
-This is done by the CUDA backend as well.
-The benefit of this optimization will however not be as great as with the CUDA version as CPUs suffer much less from random memory access than GPUs.
 
 \chapter{Results}
 \section{Benchmarks}
@@ -2078,9 +2185,103 @@ The Benchmark machine is a dual CPU server and therefore can't share the on-chip
 In fact the runtime is identical whether executed with 8 or 16 cores.
 On very large datasets (>12000 bodies) this is no longer the case and the extra parallelism is noticeable.
 
+\subsection{Canny Edge Detection}
+The Canny edge detector is an edge detection operator that uses a multi-stage algorithm to detect a wide range of edges in images.
+It was developed by John F. Canny in 1986.
+Canny edge detection is a four step process.
+\begin{enumerate}
+\item A Gaussian blur is applied to clear any speckles and free the image of noise.
+\item A gradient operator is applied for obtaining the gradients' intensity and direction.
+\item Non-maximum suppression determines if the pixel is a better candidate for an edge than its neighbours.
+\item Hysteresis thresholding finds where edges begin and end.
+\end{enumerate}
+
+An example of the algorithm in action is shown in figure \ref{fig:lena}.
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.4\textwidth]{images/benchmarks/canny/lena}
+    \includegraphics[width=0.4\textwidth]{images/benchmarks/canny/lena-edges}
+    \label{fig:lena}
+\end{figure}
+
+The Canny Edge Detection consists mainly of stencil convolutions.
+These are very specialized operations.
+Figure \ref{fig:canny} shows the run time for different image sizes.
+The Repa and Accelerate versions both execute on 16 cores while the OpenCV version only uses one CPU.
+Accelerate is consistently faster than Repa in this benchmark.
+On small image sizes, the OpenCV version, even though only running on 1 core, is significantly faster than both Accelerate and Repa.
+With larger image sizes, this difference becomes smaller.
+One important difference is, that OpenCV is carefully optimized to vectorize well.
+The skeleton code for stencils is barely optimized at all and hence doesn't vectorize.
+Repa cannot vectorize for technical reasons.\cite{lippmeier2012efficient}
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.8\textwidth]{images/benchmarks/canny/canny}
+    \label{fig:canny}
+\end{figure}
+
 \chapter{Conclusion}
+Prior to this thesis, only a handful of skeletons were implemented in the llvm backend to accelerate.
+These worked, but were hard to read as the tool used relied on manipulating blocks directly.
+In this thesis I presented an alternative approach to code generation for llvm.
+I implemented the remaining skeletons and rewrote the existing ones using my quasiquoter.
+The resulting code is much more legible and therefore maintainable than the purely monadic approach taken by previous work.
+
+One reason for using LLVM as the target is, that it is very clear what the produced code will look like on assembler-level.
+I was important for me not to compromise this advantage.
+I parse LLVM Instructions directly without modification, so it is guaranteed that the user has absolute control over the generated code.
+To improve legibility and maintainability, I introduced concepts from high-level languages like mutable variables and control structures.
+These are purely an addition to the existing LLVM language and are translated into LLVM code by the quasiquoter.
+
+Using a foreign library in Haskell is often tedious, as the main documentation doesn't quite line up with the Haskell bindings.
+LLVM is no exception to this, although the AST used is very well documented.
+This where the quasiquoter shines, as the instructions are exactly the same as documented in the language reference.
+
+Most languages model variables as cells in memory.
+This is fine, as LLVM is capable to lower these into register values if possible.
+The code already present in the LLVM backend didn't use this method however, so the quasiquoter doesn't use this mechanism.
+Instead, it treats regular LLVM values as variables that can be re-assigned at any time.
+To this end, I implemented a transformation back into legal LLVM code.
+The resulting language has everything you would expect from an imperative language like mutable variables and control structures.
+In this way, it ``feels'' much like programming in C, while still having a clear representation in LLVM IR.
+
 \section{Related Work}
-\todo{related work}
+Haskell offers a range of ways to implement operations on arrays effectively.
+The one most closely resembling Accelerate is Repa.
+As in the LLVM backend described in this thesis, it uses gang workers to execute computations on multiple CPUs concurrently.
+The important difference between Accelerate and Repa is the execution model.
+While Repa computations behave like any other Haskell computation, Accelerate behaves more like running a Monad.
+Since Accelerate is device-independent, it has to compile the needed functions at runtime before the actual computation can occur.
+
+In terms of code generation, C-- most closely resembles the language I created.
+It was designed as an intermediate language for compilers and is in use in GHC.
+It's design is inspired by C, but it replaces many language elements for clearer definitions.
+Like LLVM, it's type system is deliberately designed to reflect constraints of the underlying hardware.
+There is however no clear standard implementation for C--, making it more difficult to use than LLVM.
+
+\section{Future Work}
+I developed the quasiquoter mainly as a tool to use for skeleton code generation.
+This means, that the main focus was on generating code for complete functions.
+It should be possible to use it to generate elements of code that could then be spliced in, but I haven't explored this.
+
+The SSA transformation is not optimal.
+It produces code with far too many \lstinline!phi! instructions.
+LLVM is capable of eliminating those redundant instructions, but an optimization pass is necessary for this.
+If the code is to be printed directly however, this produces non-optimal code.
+
+With my contribution, the LLVM backend is almost functionally complete and passes all existing tests.
+The performance is promising, outrunning Repa in most cases.
+There is however much room for improvement as not all skeletons vectorize as well as they possibly could.
+Stencil convolutions for example don't vectorize at all at the moment, although they could if implemented with this in mind.
+
+Although it is functionally almost complete, it is not ready for a release yet.
+The major part still missing is the support for FFI (\href{https://github.com/AccelerateHS/accelerate/issues/183}{\#183}).
+There are also still a number of bugs that have to be addressed first.
+These range from space leaks (\href{https://github.com/AccelerateHS/accelerate/issues/181}{\#181}) to random segfaults (\href{https://github.com/AccelerateHS/accelerate/issues/179}{\#179}).
+A list of open issues can be found at \url{https://github.com/AccelerateHS/accelerate/labels/llvm%20backend}.
+
 
 \appendix
 %\chapter{Listings}

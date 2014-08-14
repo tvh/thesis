@@ -2,7 +2,7 @@
 
 set title "Canny Edge Detection"
 
-set terminal pdf size 3,2.2
+set terminal pdf size 4,3
 set output "canny.pdf"
 
 set key on
@@ -17,18 +17,12 @@ set ylabel "Run Time (ms)"
 set logscale y
 
 
-plot    'canny.dat' using ($1*$1):($4)                          \
-                title "Accelerate (whole program)"              \
-                ls 2  lw 4 with linespoints,                    \
-        'canny.dat' using ($1*$1):($3)                          \
-                title "Accelerate (just GPU kernels)"           \
+plot    'canny.dat' using ($1*$1):($2)                          \
+                title "Accelerate"           \
                 ls 10  lw 4 with linespoints,                   \
-        'canny.dat' using ($1*$1):($2)                          \
+        'canny.dat' using ($1*$1):($3)                          \
                 title "Repa"                                    \
                 ls 4  lw 4 with linespoints,                    \
-        'canny.dat' using ($1*$1):($5)                          \
-                title "OpenCV (CPU)"                            \
-                ls 3  lw 4 with linespoints,                    \
-        'canny.dat' using ($1*$1):($6)                          \
-                title "OpenCV (GPU)"                            \
-                ls 1  lw 4 with linespoints
+        'canny.dat' using ($1*$1):($4)                          \
+                title "OpenCV"                            \
+                ls 3  lw 4 with linespoints
