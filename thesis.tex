@@ -22,7 +22,7 @@
 \usetikzlibrary{shapes.geometric, arrows}
 
 \lstset{basicstyle=\footnotesize\ttfamily,
-        breaklines=true,
+        breaklines=false,
 %        frame=single,
         language=llvm}
 
@@ -395,7 +395,8 @@ Figures \ref{fig:slpll1} and \ref{fig:slpll2} show the the corresponding LLVM be
 
 \begin{figure}
 \begin{lstlisting}
-define void @foo(double %a1, double %a2, double %b1, double %b2, double* %A) {
+define void @foo(double %a1, double %a2, double %b1, double %b2, double* %A)
+{
 entry:
   %add = fadd double %a1, %b1
   %mul = fmul double %add, %a1
@@ -421,7 +422,8 @@ entry:
 
 \begin{figure}
 \begin{lstlisting}
-define void @foo(double %a1, double %a2, double %b1, double %b2, double* %A) {
+define void @foo(double %a1, double %a2, double %b1, double %b2, double* %A)
+{
 entry:
   %0 = insertelement <2 x double> undef, double %a1, i32 0
   %1 = insertelement <2 x double> %0, double %a2, i32 1
@@ -514,9 +516,8 @@ Unlike the \lstinline[language=haskell]!foldl! in the Haskell example, this \lst
 This is important as it allows for an efficient implementation.
 In order of this to work, the operation passed to \lstinline[language=haskell]!fold! has to be associative.
 
-If we want to call this function, we have to somehow produce values of type \lstinline[language=haskell]!Acc (Vector Float)!.
-
-First the list is converted with \lstinline[language=haskell]!fromList!.
+To call \lstinline[language=haskell]!dotp!, the source Data first has to be converted to the right Format.
+To do this first the list is converted with \lstinline[language=haskell]!fromList!.
 To see what it does, lets first look at its type.
 
 \begin{lstlisting}[language=haskell]
@@ -1060,7 +1061,8 @@ At this point the construction of the 2 quasiquoters differs significantly.
 \citetitle{mainland2007c} assumes that constructors stay the same, as long as there isn't a different case available.
 It does this by using the function
 \begin{lstlisting}[language=haskell]
-dataToExpQ :: Data a => (forall b. Data b => b -> Maybe (Q Exp)) -> a -> Q Exp
+dataToExpQ
+  :: Data a => (forall b. Data b => b -> Maybe (Q Exp)) -> a -> Q Exp
 \end{lstlisting}
 This functions converts anything that is of typeclass \lstinline[language=haskell]!Data! into a Template Haskell expression.
 In addition to this however, it also takes an extra function to handle exceptions.
@@ -1282,18 +1284,18 @@ It would be useful however to also antiquote sequences of code.
 The existing code in accelerate-llvm uses the \lstinline[language=haskell]!CodeGen! monad to produce code.
 \begin{lstlisting}[language=haskell]
 data CodeGenState = CodeGenState
-  { blockChain          :: Seq Block                            -- blocks for this function
-  , symbolTable         :: Map Name AST.Global                  -- global (external) function declarations
-  , metadataTable       :: HashMap String (Seq [Maybe Operand]) -- module metadata to be collected
-  , intrinsicTable      :: HashMap String Name                  -- standard math intrinsic functions
-  , next                :: {-# UNPACK #-} !Word                 -- a name supply
+  { blockChain          :: Seq Block
+  , symbolTable         :: Map Name AST.Global
+  , metadataTable       :: HashMap String (Seq [Maybe Operand])
+  , intrinsicTable      :: HashMap String Name
+  , next                :: {-# UNPACK #-} !Word
   }
   deriving Show
 
 data Block = Block
-  { blockLabel          :: Name                         -- block label
-  , instructions        :: Seq (Named Instruction)      -- stack of instructions
-  , terminator          :: Maybe (Named Terminator)     -- block terminator
+  { blockLabel          :: Name
+  , instructions        :: Seq (Named Instruction)
+  , terminator          :: Maybe (Named Terminator)
   }
   deriving Show
 
@@ -1650,7 +1652,9 @@ It is however really not at all guaranteed, that it will vectorize.
 A simple counter example is the following.
 \begin{lstlisting}[language=haskell]
 let a0 = use (Array (Z :. 10) [1,2,3,4,5,6,7,8,9,10])
-in backpermute (Z :. 10) (\x0 -> Z :. mod (1 + (indexHead x0),indexHead (shape a0))) a0
+in backpermute (Z :. 10) 
+               (\x0 -> Z :. mod (1 + (indexHead x0),indexHead (shape a0)))
+               a0
 \end{lstlisting}
 All this code does is rotate the array to the right by one element and then adding one.
 This code, if optimized by hand, could be easily vectorized.
@@ -1658,14 +1662,18 @@ This code, if optimized by hand, could be easily vectorized.
 To give another positive example, let's look at the reversal of an array.
 \begin{lstlisting}[language=haskell]
 let a0 = use (Array (Z :. 10) [1,2,3,4,5,6,7,8,9,10])
-in transform
-     (shape a0) (\x0 -> Z :. -1 + ((indexHead (shape a0)) - (indexHead x0))) (\x0 -> 1 + x0) a0
+in transform (shape a0)
+             (\x0 -> Z :. -1 + ((indexHead (shape a0)) - (indexHead x0)))
+             (\x0 -> 1 + x0)
+             a0
 \end{lstlisting}
 This vectorizes just fine.
 LLVM uses \lstinline{shufflevector} to achieve this.
 \begin{lstlisting}
 ...
-%reverse = shufflevector <4 x i64> %wide.load, <4 x i64> undef, <4 x i32> <i32 3, i32 2, i32 1, i32 0>
+%reverse = shufflevector <4 x i64> %wide.load,
+                         <4 x i64> undef,
+                         <4 x i32> <i32 3, i32 2, i32 1, i32 0>
 ...
 \end{lstlisting}
 
@@ -1751,7 +1759,8 @@ We use special atomic memory operation to use these for a spinlock.
 
 First we have to determine the specific memory cell to use.
 \begin{lstlisting}
-                %baddr = getelementptr i8* $opr:barrier, $type:intType $opr:dst
+                %baddr = getelementptr i8* $opr:barrier,
+                                       $type:intType $opr:dst
 \end{lstlisting}
 With this, we can now look at the the lock is taken.
 \begin{lstlisting}
@@ -1951,7 +1960,8 @@ This has to be converted into a usable range first.
 \begin{lstlisting}
             ;; calculate the start of the current chunk
             %ix    = mul $type:intType %i,  %chunkSize
-            ;; Determine the end of the current chunk. If this is the last chunk,
+            ;; Determine the end of the current chunk.
+            ;; If this is the last chunk,
             ;; then this is the same as the end of the array.
             %last1 = add $type:intType %ix, %chunkSize
             %c1    = icmp eq $type:intType %i, %lastChunk
