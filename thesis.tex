@@ -17,12 +17,12 @@
 \usepackage{enumitem}
 \usepackage[section]{placeins}
 \usepackage{tikz}
-\usepackage{setspace}
+\usepackage[onehalfspacing]{setspace}
+\recalctypearea
 \usetikzlibrary{shapes.geometric, arrows}
 
 \lstset{basicstyle=\footnotesize\ttfamily,
         breaklines=true,
-        xleftmargin=.07\textwidth,
 %        frame=single,
         language=llvm}
 
@@ -81,8 +81,8 @@
 \tikzstyle{decision} = [diamond, minimum width=3cm, minimum height=1cm, text centered, draw=black, fill=green!30]
 \tikzstyle{arrow} = [thick,->,>=stealth]
 
-\onehalfspace
-
+\showboxdepth=\maxdimen
+\showboxbreadth=\maxdimen
 \begin{document}
 
 \frontmatter
@@ -233,7 +233,7 @@ int sum(int* a, int length) {
 
 \begin{figure}
 \begin{lstlisting}
-define i32 @@sum(i32* nocapture readonly %a, i32 %length) {
+define i32 @sum(i32* nocapture readonly %a, i32 %length) {
 entry:
   %cmp4 = icmp sgt i32 %length, 0
   br i1 %cmp4, label %for.body, label %for.end
@@ -303,13 +303,13 @@ In addition to this, the vectorizer will also unroll the inner loop to make fewe
 Figure \ref{fig:sumllvec} shows the corresponding llvm code without loop unroll, as this increases code size dramatically.
 
 \begin{figure}
-\begin{lstlisting}[basicstyle=\scriptsize\ttfamily, xleftmargin=0pt]
-define i32 @@sum(i32* nocapture readonly %a, i32 %length) #0 {
+\begin{lstlisting}[basicstyle=\scriptsize\ttfamily]
+define i32 @sum(i32* nocapture readonly %a, i32 %length) {
 entry:
   %cmp4 = icmp sgt i32 %length, 0
   br i1 %cmp4, label %for.body.preheader, label %for.end
 
-for.body.preheader:                               ; preds = %entry
+for.body.preheader:                   ; preds = %entry
   %0 = add i32 %length, -1
   %1 = zext i32 %0 to i64
   %2 = add i64 %1, 1
@@ -318,7 +318,7 @@ for.body.preheader:                               ; preds = %entry
   %cmp.zero = icmp eq i64 %n.vec, 0
   br i1 %cmp.zero, label %middle.block, label %vector.body
 
-vector.body:                                      ; preds = %for.body.preheader, %vector.body
+vector.body:                          ; preds = %for.body.preheader, %vector.body
   %index = phi i64 [ %index.next, %vector.body ], [ 0, %for.body.preheader ]
   %vec.phi = phi <2 x i32> [ %5, %vector.body ], [ zeroinitializer, %for.body.preheader ]
   %3 = getelementptr inbounds i32* %a, i64 %index
@@ -329,7 +329,7 @@ vector.body:                                      ; preds = %for.body.preheader,
   %6 = icmp eq i64 %index.next, %n.vec
   br i1 %6, label %middle.block, label %vector.body
 
-middle.block:                                     ; preds = %vector.body, %for.body.preheader
+middle.block:                         ; preds = %vector.body, %for.body.preheader
   %resume.val = phi i64 [ 0, %for.body.preheader ], [ %n.vec, %vector.body ]
   %rdx.vec.exit.phi = phi <2 x i32> [ zeroinitializer, %for.body.preheader ], [ %5, %vector.body ]
   %rdx.shuf = shufflevector <2 x i32> %rdx.vec.exit.phi, <2 x i32> undef, <2 x i32> <i32 1, i32 undef>
@@ -338,7 +338,7 @@ middle.block:                                     ; preds = %vector.body, %for.b
   %cmp.n = icmp eq i64 %end.idx, %resume.val
   br i1 %cmp.n, label %for.end, label %for.body
 
-for.body:                                         ; preds = %middle.block, %for.body
+for.body:                             ; preds = %middle.block, %for.body
   %indvars.iv = phi i64 [ %indvars.iv.next, %for.body ], [ %resume.val, %middle.block ]
   %x.05 = phi i32 [ %add, %for.body ], [ %7, %middle.block ]
   %arrayidx = getelementptr inbounds i32* %a, i64 %indvars.iv
@@ -349,7 +349,7 @@ for.body:                                         ; preds = %middle.block, %for.
   %exitcond = icmp eq i32 %lftr.wideiv, %length
   br i1 %exitcond, label %for.end, label %for.body
 
-for.end:                                          ; preds = %for.body, %middle.block, %entry
+for.end:                              ; preds = %for.body, %middle.block, %entry
   %x.0.lcssa = phi i32 [ 0, %entry ], [ %add, %for.body ], [ %7, %middle.block ]
   ret i32 %x.0.lcssa
 }
@@ -392,7 +392,7 @@ Figures \ref{fig:slpll1} and \ref{fig:slpll2} show the the corresponding LLVM be
 
 \begin{figure}
 \begin{lstlisting}
-define void @@foo(double %a1, double %a2, double %b1, double %b2, double* %A) {
+define void @foo(double %a1, double %a2, double %b1, double %b2, double* %A) {
 entry:
   %add = fadd double %a1, %b1
   %mul = fmul double %add, %a1
@@ -418,7 +418,7 @@ entry:
 
 \begin{figure}
 \begin{lstlisting}
-define void @@foo(double %a1, double %a2, double %b1, double %b2, double* %A) {
+define void @foo(double %a1, double %a2, double %b1, double %b2, double* %A) {
 entry:
   %0 = insertelement <2 x double> undef, double %a1, i32 0
   %1 = insertelement <2 x double> %0, double %a2, i32 1
@@ -469,7 +469,7 @@ llvm-general also supports optimization and jit-compilation.
 The optimization is controlled by a \lstinline[language=haskell]!PassSetSpec!
 This offers the user 2 different options: \lstinline[language=haskell]!CuratedPassSetSpec! and \lstinline[language=haskell]!PassSetSpec!.
 Using \lstinline[language=haskell]!CuratedPassSetSpec! is the easier option of the 2.
-It offers a similar level of control as specifying @-On@ at the command line.
+It offers a similar level of control as specifying \texttt{-On} at the command line.
 Using \lstinline[language=haskell]!PassSetSpec! gives much more control over the exact passes run, but you have to specify them one by one.
 Both of these specs also come with fields to specify information about the target.
 
@@ -779,7 +779,7 @@ This is done at compile-time, so you get the same type safety as you would writi
 
 \begin{figure}
 \begin{lstlisting}
-define i32 @@foo(i32 %x) #0 {
+define i32 @foo(i32 %x) #0 {
 entry:
   br label %for.cond
 
@@ -827,7 +827,7 @@ This means
 \begin{figure}
 \begin{lstlisting}
 [llg|
-define i64 @@foo(i64 %start, i64 %end) {
+define i64 @foo(i64 %start, i64 %end) {
   entry:
     br label %for
 
@@ -855,7 +855,7 @@ This is clearly more readable.
 
 \begin{figure}
 \begin{lstlisting}
-define i64 @@foo(i64 %start, i64 %end) {
+define i64 @foo(i64 %start, i64 %end) {
 entry:
   br label %for
 
@@ -901,7 +901,7 @@ In the new approach, the new loop counter is calculated at the end, whereas it w
 \begin{figure}
 \begin{lstlisting}
 [llg|
-define i64 @@foo(i64 %start, i64 %end) {
+define i64 @foo(i64 %start, i64 %end) {
   entry:
     %x = i64 0
 
@@ -921,7 +921,7 @@ define i64 @@foo(i64 %start, i64 %end) {
 
 \begin{figure}
 \begin{lstlisting}
-define i64 @@foo(i64 %start, i64 %end) {
+define i64 @foo(i64 %start, i64 %end) {
 entry:
   br label %for.head
 
@@ -1544,7 +1544,7 @@ The rest is then relatively self-explaining.
 \begin{lstlisting}
   in
   makeKernelQ "generate" [llgM|
-    define void @@generate
+    define void @generate
     (
         $params:paramGang,
         $params:paramOut,
@@ -1588,7 +1588,7 @@ The following is the core part of the \lstinline[language=haskell]!map! skeleton
 I omit the rest of the function as the difference to \lstinline[language=haskell]!generate! is mostly mechanical.
 \begin{lstlisting}
 makeKernelQ "map" [llgM|
-    define void @@map
+    define void @map
     (
         $params:paramGang,
         $params:paramOut,
@@ -1703,7 +1703,7 @@ To get the values, the loop goes over all the elements in the source array.
 This is then projected into the target array.
 \begin{lstlisting}
   makeKernelQ "permute" [llgM||
-    define void @@permute
+    define void @permute
     (
         $params:paramGang,
         $params:paramBarrier,
@@ -1806,7 +1806,7 @@ The natural unit of computation for a fold is one element in the output array.
 This degree of parallelism can be achieved without multiple passes.
 \begin{lstlisting}
   makeKernelQ "fold" [llgM|
-    define void @@fold
+    define void @fold
     (
         $params:paramGang,
         $params:paramStride,
@@ -1897,7 +1897,7 @@ The rest forms one big kernels, as I essentially combine 2 separate operations i
 First look at the function parameters.
 \begin{lstlisting}
   makeKernelQ "scanl" [llgM|
-    define void @@scanl
+    define void @scanl
     (
         $params:paramGang,
         $type:intType %lastChunk,
@@ -2079,7 +2079,7 @@ All that remains now is the actual skeleton code.
 This looks very similar to the \lstinline[language=haskell]!map! skeleton.
 \begin{lstlisting}
   makeKernelQ "stencil" [llgM|
-    define void @@stencil
+    define void @stencil
     (
         $params:paramGang,
         $params:paramIn,
@@ -2171,7 +2171,7 @@ For small sizes, \lstinline[language=haskell]!Data.Vector! is faster than Accele
 This is due to the overhead Accelerate brings to the table.
 For bigger sizes Accelerate is significantly faster however.
 
-When running with @+RTS -N16@, it doesn't scale quite as well as the raytracer for smaller sizes.
+When running with \texttt{+RTS -N16}, it doesn't scale quite as well as the raytracer for smaller sizes.
 This is likely due to memory transfers.
 The Benchmark machine is a dual CPU server and therefore can't share the on-chip cache between all available cores.
 In fact the runtime is identical whether executed with 8 or 16 cores.
