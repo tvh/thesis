@@ -22,14 +22,12 @@ executable dotp
   build-depends:
           base                  >= 4.7 && <4.8
         , accelerate            == 0.15.*
-        , accelerate-cuda       == 0.15.*
         , accelerate-llvm-native       == 0.15.*
+        , accelerate-llvm       == 0.15.*
         , accelerate-io         == 0.15.*
         , criterion             >= 0.8
-        , cuda                  >= 0.6
-        , cublas                >= 0.1
         , mwc-random            == 0.13.*
-        , repa                  == 3.2.*
+        , repa                  == 3.3.*
         , vector                == 0.10.*
 
   ghc-options:

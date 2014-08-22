@@ -812,7 +812,7 @@ Without the ability to reference Haskell variables, this would be fairly useless
 But quasiquotation allows for antiquotation as well.
 This means you can still reference arbitrary Haskell variables from within the quotation.
 Using this the following are equivalent:
-\begin{itemize}
+\begin{itemize}[noitemsep]
  \item \lstinline{[llinstr| add i64 %x, 1 |]}
  \item \lstinline{let y = 1 in [llinstr| add i64 %x, $opr:y |]}
 \end{itemize}
@@ -823,7 +823,7 @@ This is fairly straight forward in a simple example, but can get more complicate
 
 The real goal is a language that ``feels'' like a high-level language, but can be trivially translated into LLVM.
 This means
-\begin{itemize}
+\begin{itemize}[noitemsep]
  \item using LLVM instructions unmodified.
  \item introduce higher-level control structures like for, while and if-then-else.
 \end{itemize}
@@ -889,7 +889,7 @@ On top of this, it relies on some ``magic'' to resolve the translation and legib
 
 The main reason why it is not possible to define a better syntax is that LLVM code has to be in SSA form.
 This means, that
-\begin{enumerate}
+\begin{enumerate}[noitemsep]
  \item every variable name can only be written to once.
  \item $\Phi$-nodes are necessary where control flow merges.
 \end{enumerate}
@@ -952,7 +952,7 @@ for.end:                                          ; preds = %for.head
 llvm-general-quote supports all llvm instructions.
 For better usage however, I added control structures like the for loop discussed earlier.
 These are the additions I made to the syntax:
-\begin{itemize}
+\begin{itemize}[noitemsep]
  \item direct assignment: \lstinline!<var> = <ty> <val>!
  \item if: \lstinline!if <cond> { <instructions> } [ else { <instructions> } ]!
  \item while: \lstinline!while <cond> { <instructions> }!
@@ -962,7 +962,7 @@ These are the additions I made to the syntax:
 \subsection{antiquotation}
 An important part of every quasiquoter is the ability to reference other variables in scope.
 The available antiquotations are:
-\begin{itemize}
+\begin{itemize}[noitemsep]
 \item \$dl: \lstinline[language=haskell]!DataLayout!
 \item \$tt: target triple (\lstinline[language=haskell]!String!)
 \item \$def: \lstinline[language=haskell]!Definition!
@@ -1269,7 +1269,7 @@ for <ty1> <var1> in <val1> to <val2> with <ty2> <values> as <var2>
 An example of this can be found in figure \ref{fig:forquote}, page \pageref{fig:forquote}.
 \todo{write about desugaring}
 
-\begin{itemize}
+\begin{itemize}[noitemsep]
 \item cumbersome syntax
 \item limited functionality
 \item jumpnext
@@ -2118,7 +2118,8 @@ The reason for this is the boundary.
 If the whole stencil is guaranteed to be in bounds, the bounds check could be omitted however.
 This way the read would be guaranteed to vectorize.
 
-\chapter{Results}
+\chapter{Evaluation}
+
 \section{Benchmarks}
 
 The Benchmarks were run on a dual CPU Xeon E5-2650 (16 cores, 2GHz, 64GB RAM) running GNU/Linux (Ubuntu 12.04 LTS).
@@ -2226,6 +2227,103 @@ Repa cannot vectorize for technical reasons.\cite{lippmeier2012efficient}
     \includegraphics[width=0.8\textwidth]{images/benchmarks/canny/canny}
     \label{fig:canny}
 \end{figure}
+
+\subsection{Dot product}
+Dot product, or scalar product, is an algebraic operation that takes two equal-length sequences of numbers and returns a single number by computing the sum of the products of the corresponding entries in the two sequences.
+
+\[
+\begin{pmatrix}
+x_0 \\ ... \\ x_{n-1}
+\end{pmatrix}
+\times
+\begin{pmatrix}
+y_0 \\ ... \\ y_{n-1}
+\end{pmatrix}
+= \displaystyle\sum_{i=0}^{n-1} x_i*y_i
+\]
+
+\begin{figure}
+    \centering
+    \includegraphics[width=0.8\textwidth]{images/benchmarks/dotp/dotp}
+    \label{fig:dotp_bench}
+\end{figure}
+
+Figure \ref{fig:dotp_bench} shows the runtime of the dot product.
+Before Accelerate can compute it's result, the kernels have to be compiled first.
+This takes a considerable amount of time -- longer than the whole computation using \lstinline[language=haskell]{Data.Vector}.
+The time needed for this step is however constant independent of the array size and can be mostly avoided when using \lstinline[language=haskell]{run1}.
+
+Only looking at the runtime of the computation, Accelerate is faster than the sequential \lstinline[language=haskell]{Data.Vector} implementation.
+It is however significantly slower than Repa.
+Accelerate has a much higher runtime overhead compared to Repa, which explains some of the gap.
+When distributing the work to the different workers, it is split into smaller chunks.
+As this benchmark has a particularly tight inner loop, these chunks are likely smaller than optimal.
+
+\subsection{Online Compilation}
+As seen in the dot product benchmark, Accelerate has a high overhead in the compilation step.
+To understand what exactly the issue is, let's look a bit closer.
+
+The function responsible for this compilation is \lstinline[language=haskell]{compileForNativeTarget}.
+
+\begin{lstlisting}[language=haskell]
+compileForNativeTarget :: DelayedOpenAcc aenv a -> Gamma aenv -> LLVM Native (ExecutableR Native)
+compileForNativeTarget acc aenv = do
+  target <- gets llvmTarget
+
+  -- Generate code for this Acc operation
+  let Module ast = llvmOfAcc target acc aenv
+      triple     = fromMaybe "" (moduleTargetTriple ast)
+      datalayout = moduleDataLayout ast
+
+  -- Lower the generated LLVM AST all the way to JIT compiled functions.
+  fun <- liftIO . startFunction $ do
+    ctx     <- ContT withContext
+    mdl     <- runErrorCont $ withModuleFromAST ctx ast
+    machine <- runErrorCont withNativeTargetMachine
+    libinfo <- ContT $ withTargetLibraryInfo triple
+
+    liftIO $ optimiseModule datalayout (Just machine) (Just libinfo) mdl
+
+    mcjit <- ContT $ withMCJIT ctx opt model ptrelim fast
+    exe   <- ContT $ withModuleInEngine mcjit mdl
+    liftIO $ getGlobalFunctions ast exe
+
+  return $! NativeR fun
+\end{lstlisting}
+
+Figure \ref{fig:compile} shows the runtime of each step.
+All runtimes are averaged over 10 runs.
+
+\begin{figure}
+    \centering
+\begin{tabular}{ll}
+Step             & Time (ms)   \\ \hline
+getTarget        & 0.098  \\
+llvmOfAcc              & 0.0771 \\
+startFunction    & 0.0403 \\
+withContext      & 0.0879 \\
+withModuleFromAST       & 6.8032 \\
+withMachine      & 0.2997 \\
+libinfo          & 0.0801 \\
+optimizeModule   & 4.0379 \\
+withMCJIT        & 0.05   \\
+withModuleInEngine   & 0.2374 \\
+getGlobalFunctions & 9.8508 \\
+\end{tabular}
+    \label{fig:compile}
+\end{figure}
+
+Looking at the times, there are 3 main cost centres.
+
+\begin{itemize}[noitemsep]
+ \item withModuleFromAST
+ \item optimizeModule
+ \item getGlobalFunctions
+\end{itemize}
+
+These all live in the LLVM API and are therefore mostly independent of the Accelerate implemenation.
+It may be possible to reduce these through options to LLVM, but this is beyond the scope of this thesis.
+Another interesting aspect is, that the construction of the AST doesn't take up any significant amount of time.
 
 \chapter{Conclusion}
 Prior to this thesis, only a handful of skeletons were implemented in the llvm backend to accelerate.
