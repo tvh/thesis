@@ -10,7 +10,7 @@
 \usepackage{courier}
 \usepackage[T1]{fontenc}
 \usepackage{amsmath}
-\usepackage[obeyFinal]{todonotes}
+\usepackage[final]{todonotes}
 \usepackage{multirow}% http://ctan.org/pkg/multirow
 \usepackage{listingsutf8}
 \usepackage{enumitem}
@@ -18,18 +18,21 @@
 \usepackage{tikz}
 \usepackage[onehalfspacing]{setspace}
 \usepackage{subcaption}
+\usepackage{captcont}
 \usepackage{float}
 \usepackage{hyperref}
+\usepackage{parskip}
 \recalctypearea
 \usetikzlibrary{shapes.geometric, arrows}
 
 \lstset{basicstyle=\ttfamily,
         breaklines=false,
 %        frame=single,
+        keywordstyle=\ttfamily,
         language=llvm}
 
-\widowpenalty=1000
-\clubpenalty=1000
+%\widowpenalty=1000
+%\clubpenalty=1000
 % Use cite/entry key as fallback label
 \DeclareLabelalphaTemplate{
   \labelelement{
@@ -143,17 +146,17 @@ Implementing parallel computations is traditionally done in low level languages 
 This allows great control over the details of execution.
 Unfortunately, this also comes with the complexities of using a low-level language.
 To make this easier, \citeauthor{chakravarty2011accelerating} have developed Accelerate, an embedded array language for computations for high-performance computing in Haskell.
-The main execution target of this EDSL is GPUs via CUDA.
+The main execution target of this language is GPUs using the parallel computation framework CUDA.
 
-\citeauthor{trevor2014llvm} started working on an alternative implementation using LLVM.
+\citeauthor{trevor2014llvm} started working on an alternative implementation using the LLVM compiler framework.
 I contribute to this work by implementing a different approach to code-generation for LLVM using quasi-quotation.
 I use this quasi-quoter to implement the skeletons in the LLVM backend.
 
 % Verzeichnisse
-\listoftodos
+%\listoftodos
 \tableofcontents   % Inhaltsverzeichnis
 \listoffigures     % Abbildungsverzeichnis
-\listoftables      % Tabellenverzeichnis
+%\listoftables      % Tabellenverzeichnis
 \mainmatter
 
 \chapter{Introduction}
@@ -167,7 +170,7 @@ This class of problems is addressed by Accelerate\cite{chakravarty2011accelerati
 Accelerate is an an embedded array language for computations for high-performance computing in Haskell.
 
 The way an algorithm is expressed in Accelerate is using a set of combinator functions like \lstinline[language=haskell]!map! or \lstinline[language=haskell,morekeywords={fold}]!fold!.
-To give an example, lets look at the dot product of 2 vectors.
+To give an example, lets look at the dot product of 2 vectors as defined by.
 \[
 \begin{pmatrix}
 x_0 \\ ... \\ x_{n-1}
@@ -179,20 +182,24 @@ y_0 \\ ... \\ y_{n-1}
 = \displaystyle\sum_{i=0}^{n-1} x_i*y_i
 \]
 
-This can be trivially implemented in Haskell using \lstinline[language=haskell]!foldl'!\footnote{The implementation of \lstinline[language=haskell]!foldl! in Haskell is such, that it will produce large intermediate chunks. \lstinline[language=haskell]!foldl'! is a strict variant, so this doesn't happen.} and \lstinline[language=haskell]!zipWith!.
+This can be trivially implemented in Haskell using \lstinline[language=haskell]!foldl'!\footnote{The implementation of \lstinline[language=haskell]!foldl! in Haskell is such, that it will not force the computation, but rather build it up in memory. \lstinline[language=haskell]!foldl'! is a strict variant, so this doesn't happen.} and \lstinline[language=haskell]!zipWith!.
 \begin{lstlisting}[language=haskell]
 dotp_list :: [Float] -> [Float] -> Float
 dotp_list xs ys =
-  foldl (+) 0 (zipWith (*) xs ys)
+  foldl' (+) 0 (zipWith (*) xs ys)
 \end{lstlisting}
 This code is purely sequential however and is therefore limited to only one CPU.
-Accelerate allows you to write this computation in nearly exactly the same way.
+Accelerate allows you to write this computation in nearly exactly the same way:
+
+\begin{minipage}{\textwidth}
 \begin{lstlisting}[language=haskell]
 dotp :: Acc (Vector Float)
      -> Acc (Vector Float)
      -> Acc (Scalar Float)
 dotp xs ys = fold (+) 0 (zipWith (*) xs ys)
 \end{lstlisting}
+\end{minipage}
+
 In order to run this computation in parallel, there has to be an implementation leveraging the possible parallelism.
 The implementation presented in the original Accelerate work targets NVIDIA GPUs using CUDA, as those offered the most performance, while being traditionally hard to program.
 This works great in a specialized setting where there is a powerful GPGPU available.
@@ -200,7 +207,7 @@ If there is no GPGPU available to run this computation however, this implementat
 To use Accelerate in a more general setting, there has been early work on an alternative backend to Accelerate using LLVM.\cite{trevor2014llvm}
 This work includes both a CPU and a GPU backend.
 As this is very early work, there are still missing pieces to support the full feature set of Accelerate.
-One of these pieces is the code generation for the different combinator function.
+One of these pieces is the code generation for the different combinator functions.
 
 In this thesis I will develop a novel approach to code generation for LLVM.
 I will use this to implement the missing pieces in the code generation of the native LLVM backend.
@@ -317,13 +324,16 @@ In addition to this, the vectorizer will also unroll the inner loop to make fewe
 Figure \ref{fig:sumllvec} shows the corresponding llvm code without loop unroll, as this increases code size dramatically.
 
 \begin{figure}
-\begin{lstlisting}[basicstyle=\scriptsize\ttfamily]
+\caption{Vectorized Sum}
+\label{fig:sumllvec}
+\begin{subfigure}{\textwidth}
+\begin{lstlisting}
 define i32 @sum(i32* nocapture readonly %a, i32 %length) {
 entry:
   %cmp4 = icmp sgt i32 %length, 0
   br i1 %cmp4, label %for.body.preheader, label %for.end
 
-for.body.preheader:                   ; preds = %entry
+for.body.preheader:   ; preds = %entry
   %0 = add i32 %length, -1
   %1 = zext i32 %0 to i64
   %2 = add i64 %1, 1
@@ -332,8 +342,9 @@ for.body.preheader:                   ; preds = %entry
   %cmp.zero = icmp eq i64 %n.vec, 0
   br i1 %cmp.zero, label %middle.block, label %vector.body
 
-vector.body:                          ; preds = %for.body.preheader, %vector.body
-  %index = phi i64 [ %index.next, %vector.body ], [ 0, %for.body.preheader ]
+vector.body:          ; preds = %for.body.preheader, %vector.body
+  %index = phi i64 [ %index.next, %vector.body ],
+                   [ 0, %for.body.preheader ]
   %vec.phi = phi <2 x i32> [ %5, %vector.body ],
                            [ zeroinitializer, %for.body.preheader ]
   %3 = getelementptr inbounds i32* %a, i64 %index
@@ -344,19 +355,30 @@ vector.body:                          ; preds = %for.body.preheader, %vector.bod
   %6 = icmp eq i64 %index.next, %n.vec
   br i1 %6, label %middle.block, label %vector.body
 
-middle.block:                         ; preds = %vector.body, %for.body.preheader
-  %resume.val = phi i64 [ 0, %for.body.preheader ], [ %n.vec, %vector.body ]
-  %rdx.vec.exit.phi = phi <2 x i32> [ zeroinitializer, %for.body.preheader ],
-                                    [ %5, %vector.body ]
-  %rdx.shuf = shufflevector <2 x i32> %rdx.vec.exit.phi, <2 x i32> undef,
-                                                         <2 x i32> <i32 1, i32 undef>
+middle.block:         ; preds = %vector.body, %for.body.preheader
+  %resume.val = phi i64 [ 0, %for.body.preheader ],
+                        [ %n.vec, %vector.body ]
+  %rdx.vec.exit.phi =
+          phi <2 x i32> [ zeroinitializer, %for.body.preheader ],
+                        [ %5, %vector.body ]
+  %rdx.shuf = shufflevector <2 x i32> %rdx.vec.exit.phi,
+                            <2 x i32> undef,
+                            <2 x i32> <i32 1, i32 undef>
   %bin.rdx = add <2 x i32> %rdx.vec.exit.phi, %rdx.shuf
   %7 = extractelement <2 x i32> %bin.rdx, i32 0
   %cmp.n = icmp eq i64 %end.idx, %resume.val
   br i1 %cmp.n, label %for.end, label %for.body
+\end{lstlisting}
+\end{subfigure}
+\end{figure}
 
-for.body:                             ; preds = %middle.block, %for.body
-  %indvars.iv = phi i64 [ %indvars.iv.next, %for.body ], [ %resume.val, %middle.block ]
+\begin{figure}
+\ContinuedFloat
+\begin{subfigure}{\textwidth}
+\begin{lstlisting}
+for.body:             ; preds = %middle.block, %for.body
+  %indvars.iv = phi i64 [ %indvars.iv.next, %for.body ],
+                        [ %resume.val, %middle.block ]
   %x.05 = phi i32 [ %add, %for.body ], [ %7, %middle.block ]
   %arrayidx = getelementptr inbounds i32* %a, i64 %indvars.iv
   %8 = load i32* %arrayidx, align 4
@@ -366,13 +388,14 @@ for.body:                             ; preds = %middle.block, %for.body
   %exitcond = icmp eq i32 %lftr.wideiv, %length
   br i1 %exitcond, label %for.end, label %for.body
 
-for.end:                              ; preds = %for.body, %middle.block, %entry
-  %x.0.lcssa = phi i32 [ 0, %entry ], [ %add, %for.body ], [ %7, %middle.block ]
+for.end:              ; preds = %for.body, %middle.block, %entry
+  %x.0.lcssa = phi i32 [ 0, %entry ],
+                       [ %add, %for.body ],
+                       [ %7, %middle.block ]
   ret i32 %x.0.lcssa
 }
 \end{lstlisting}
-\caption{Vectorized Sum}
-\label{fig:sumllvec}
+\end{subfigure}
 \end{figure}
 
 Apart from reductions, LLVM can also vectorize the following:
@@ -391,21 +414,6 @@ Apart from reductions, LLVM can also vectorize the following:
  \item[-] Partial unrolling during vectorization
 \end{itemize}
 A detailed description can be found at\footnote{\citeurl{llvmauto}}.
-
-\subsubsection{Fast-Math Flags}
-In order for the Loop vectorizer to work, the operations involved need to be associative.
-When dealing with floating point numbers, the basic operations like \lstinline{fadd} and \lstinline{fmul} don't satisfy this condition however.
-To vectorize the code regardless, LLVM has the notion of fast-math-flags\cite{llvmref}.
-These tell the optimizer to assume certain properties that aren't true in general.
-
-Available flags are:
-\begin{itemize}[noitemsep]
-\item[nnan] No NaNs - Allow optimizations to assume the arguments and result are not NaN. Such optimizations are required to retain defined behavior over NaNs, but the value of the result is undefined.
-\item[ninf] No Infs - Allow optimizations to assume the arguments and result are not +/-Inf. Such optimizations are required to retain defined behavior over +/-Inf, but the value of the result is undefined.
-\item[nsz] No Signed Zeros - Allow optimizations to treat the sign of a zero argument or result as insignificant.
-\item[arcp] Allow Reciprocal - Allow optimizations to use the reciprocal of an argument rather than perform division.
-\item[fast] Fast - Allow algebraically equivalent transformations that may dramatically change results in floating point (e.g. reassociate). This flag implies all the others.
-\end{itemize}
 
 \subsubsection{SLP Vectorizer}
 The goal of SLP vectorization (a.k.a. superword-level parallelism) is to combine similar independent instructions into vector instructions.
@@ -481,6 +489,21 @@ define void @foo(double %a1, double %a2,
 \label{fig:slpll}
 \end{figure}
 
+\subsubsection{Fast-Math Flags}
+In order for the Loop vectorizer to work, the operations involved need to be associative.
+When dealing with floating point numbers, the basic operations like \lstinline{fadd} and \lstinline{fmul} don't satisfy this condition however.
+To vectorize the code regardless, LLVM has the notion of fast-math-flags\cite{llvmref}.
+These tell the optimizer to assume certain properties that aren't true in general.
+
+Available flags are:
+\begin{itemize}[noitemsep]
+\item[nnan] No NaNs - Allow optimizations to assume the arguments and result are not NaN. Such optimizations are required to retain defined behavior over NaNs, but the value of the result is undefined.
+\item[ninf] No Infs - Allow optimizations to assume the arguments and result are not +/-Inf. Such optimizations are required to retain defined behavior over +/-Inf, but the value of the result is undefined.
+\item[nsz] No Signed Zeros - Allow optimizations to treat the sign of a zero argument or result as insignificant.
+\item[arcp] Allow Reciprocal - Allow optimizations to use the reciprocal of an argument rather than perform division.
+\item[fast] Fast - Allow algebraically equivalent transformations that may dramatically change results in floating point (e.g. reassociate). This flag implies all the others.
+\end{itemize}
+
 \subsection{llvm-general}
 To use LLVM from Haskell, there are multiple options.
 The most complete is llvm-general.\cite{scarlet2013llvm}
@@ -524,7 +547,7 @@ dotp :: Acc (Vector Float)
 dotp xs ys = fold (+) 0 (zipWith (*) xs ys)
 \end{lstlisting}
 
-If this was implemented in regular Haskell, it would look like this.
+And the corresponding Haskell Implementation.
 
 \begin{lstlisting}[language=haskell]
 dotp_list :: [Float] -> [Float] -> Float
@@ -737,12 +760,16 @@ bar = let x = [||1||]
       in $$(x)
 \end{lstlisting}
 And produces this error message:
+
+\begin{minipage}{\textwidth}
 \begin{verbatim}
 GHC stage restriction:
   'x' is used in a top-level splice or annotation,
   and must be imported, not defined locally
 In the splice: $$x
 \end{verbatim}
+\end{minipage}
+
 Template Haskell code has to be executable on compile-time.
 This means that in a splice, all expressions must be known.
 As a consequence, they can't be defined locally or passed in as function arguments.
@@ -807,7 +834,7 @@ I propose a third approach using quasiquotation\cite{mainland2007quote}.
 The idea behind quasiquotation is, that you can define a DSL with arbitrary syntax, which you can then directly transform into Haskell data structures.
 This is done at compile-time, so you get the same type safety as you would writing the AST by hand.
 
-\begin{figure}
+\begin{figure}[ht]
 \begin{lstlisting}
 foo :: Global
 foo = [llg|
@@ -934,7 +961,7 @@ Using this, I was able to define a much more simple syntax for the \lstinline{fo
 The placement of $\Phi$-nodes is not optimal, but redundant ones can be easily remove by LLVM's InstCombine pass.
 
 Figure \ref{fig:forquoteSSA} shows the quoted and the produced code after InstCombine.
-The code produced by the for loop using SSA recovery is not identical to the other code, but it is equivalent.
+The code produced by the for-loop using SSA recovery is not identical to the other code, but it is equivalent.
 In the new approach, the new loop counter is calculated at the end, whereas it was calculated in the loop head before.
 
 \begin{figure}
@@ -1011,7 +1038,7 @@ The available antiquotations are:
 \subsection{Syntax Extensions}
 llvm-general-quote supports all llvm instructions.
 For better usage however, I added control structures like the for loop discussed earlier.
-These are the additions I made to the syntax:
+
 \begin{itemize}[noitemsep]
  \item direct assignment: \lstinline!<var> = <ty> <val>!
  \item if: \lstinline!if <cond> { <instructions> } [ else { <instructions> } ]!
@@ -1039,17 +1066,7 @@ Also, they were mostly ignored when supplied to the \lstinline[language=haskell]
 In the process, I also added support for loop and slp vectorization to \lstinline[language=haskell]!CuratedPassSetSpec!.
 
 Another issue was the lack of support for fast-math flags.\footnote{\url{https://github.com/bscarlet/llvm-general/issues/90}}
-They are now supported with the following datatype:
-\begin{lstlisting}[language=haskell]
-data FastMathFlags 
-  = NoFastMathFlags
-  | UnsafeAlgebra
-  | FastMathFlags {
-      noNaNs :: Bool,
-      noInfs :: Bool,
-      noSignedZeros :: Bool,
-      allowReciprocal :: Bool }
-\end{lstlisting}
+Now every relevant Instruction has an additional field \lstinline[language=haskell]!fastMathFlags :: FastMathFlags!.
 
 \chapter{Implementation}
 In the previous chapter I presented the extent of my work.
@@ -1059,14 +1076,14 @@ In this chapter I will focus on the details of the Implementation.
 A quasiquoter basically works like a mini compiler.
 You get a string as input and have to generate Haskell code out of that.
 In it's simplest form this would be just a parser.
-
 It is not limited to that however.
 All you need to define for a quasiquoter is a function
 \begin{lstlisting}[language=haskell]
 quoteExp :: String -> Q Exp
 \end{lstlisting}
 The \lstinline[language=haskell]!Q Exp! in this case is a Template Haskell Expression.
-Since it uses Template Haskell to construct expressions, it is possible to reference variables in scope using antiquotation.
+Since it uses Template Haskell to construct expressions, it is possible to reference variables in scope.
+This is called antiquotation if the variables are mentioned in the quasiquoted code.
 Figure \ref{fig:quasichart} shows a the design of a typical quasiquoter.
 
 \begin{figure}
@@ -1088,26 +1105,26 @@ Figure \ref{fig:quasichart} shows a the design of a typical quasiquoter.
 \label{fig:quasichart}
 \end{figure}
 
-The design of \citetitle{holtz2014quote}, the quasiquoter I defined for LLVM, is inspired by \citetitle{mainland2007c}, which is also used in the cuda implementation of Accelerate.
+The design of \citetitle{holtz2014quote}, the quasiquoter I defined for LLVM, is inspired by \citetitle{mainland2007c}, which is a quasi-quoting library for C and is also used in the CUDA implementation of Accelerate.
 This means I use \citetitle{alex} to specify the lexer and \citetitle{gill1995happy} for the parser.
 The goal of this quasiquoter is to generate an AST as defined by llvm-general-pure.
-If I want to do more than just parse complete LLVM code, I can't use this as a target for the parser.
-This means it is necessary to copy almost the whole AST and add additional constructors for antiquotation etc.
+The syntax I want to allow is more than specified by LLVM however, so I have to have a different intermediate representation.
+This means it is necessary to copy almost the whole AST and add additional constructors.
 This step wasn't necessary in \citetitle{mainland2007c} since it's target datastructure still has constructors for antiquotation.
 
 This is where the 2 quasiquoters differ significantly in their construction.
 \citetitle{mainland2007c} assumes that constructors stay the same, as long as there isn't a different case available.
-It does this by using the function
+It does this by using the function:
 \begin{lstlisting}[language=haskell]
 dataToExpQ :: Data a
            => (forall b. Data b => b -> Maybe (Q Exp))
            -> a
            -> Q Exp
 \end{lstlisting}
-This functions converts anything that is of typeclass \lstinline[language=haskell]!Data! into a Template Haskell expression.
+This converts anything that is of typeclass \lstinline[language=haskell]!Data! into a Template Haskell expression.
 In addition to this however, it also takes an extra function to handle exceptions.
-This gets executed on every subterm recursively.
-If it returns \lstinline[language=haskell]!Nothing!, then the term gets translated into an expression directly.
+This gets evaluated on every subterm recursively.
+If this evaluates to \lstinline[language=haskell]!Nothing!, then the term gets translated into an expression directly.
 It it returns \lstinline[language=haskell]!Just exp!, then \lstinline[language=haskell]!exp! is used instead.
 The transformation function is then glued together as
 \begin{lstlisting}[language=haskell]
@@ -1123,10 +1140,6 @@ type Conversion a b =
 
 class QQExp a b where
   qqExpM :: Conversion a b
-  qqExp :: a -> TExpQ b
-  qqExp x =
-    [||let s = ((0,M.empty) :: (Int,M.Map L.Name [L.Operand])))
-       in fst runState $$(qqExpM x) s||]
 \end{lstlisting}
 This typeclass provides a projection between source and target datastructure.
 The \lstinline[language=haskell]!CodegenMonad! is important mostly to supply new names to unnamed basic blocks.
@@ -1142,10 +1155,10 @@ In the meantime, all instances of \lstinline[language=haskell]!Monad! should be 
 Details can be found at \url{http://www.haskell.org/haskellwiki/Functor-Applicative-Monad_Proposal}.}
 I decided to include it anyway, as it allows for a more concise syntax im my Implementation.
 
-Using a typeclass for the conversion instead of a single function like in language-c-quote has multiple advantages.
-When there is a case missing, it will complain when the quoter is compiled instead of when it is used.
-To implement this approach however, the resulting expressions have to be properly typed.
-This was not possible before GHC 7.8.
+Using a typeclass for the conversion instead of a single function like in \emph{language-c-quote} has multiple advantages.
+When using \lstinline[language=haskell]!dataToExpQ! to convert between structures, there is no way to discern whether the produced code will be type-correct.
+This will then lead to type-errors when the the quoter is used instead of when it is defined.
+To implement this approach however, the resulting expressions have to be properly typed, which was not possible before GHC~7.8.
 
 Here is a simple example of an instance declaration of \lstinline[language=haskell]!QQExp!.
 \begin{lstlisting}[language=haskell]
@@ -1159,13 +1172,13 @@ I decided against using Template Haskell to generate the functions here, since t
 Antiquotations have to be handled a little different.
 Since there can't be any information on the antiquoted expression, it has no specific type.
 To use it in a typed expression anyway, it has to be coerced.
+
+\begin{minipage}{\textwidth}
 \begin{lstlisting}[language=haskell]
 instance QQExp A.Operand L.Operand where
-  qqExpM (A.AntiOperand s) =
-    [||$$(unsafeTExpCoerce $ antiVarE s)||]
+  qqExpM (A.AntiOperand s) = unsafeTExpCoerce $ antiVarE s
 \end{lstlisting}
-The typed expression is first produced and then spliced it into a quoted expression.
-I could have omitted this roundtrip and used the coerced value direcly.
+\end{minipage}
 
 In some cases antiquotation is still a bit cumbersome.
 One of these cases is the use of numerical constants.
@@ -1234,7 +1247,6 @@ The solution is to have the control structures on the level of basic blocks.
 This way it is possible to just produce multiple basic blocks.
 For something to behave like a basic block, it must have all the elements of a basic block.
 In llvm-general, a basic block is represented as
-
 \begin{lstlisting}[language=haskell]
 data BasicBlock =
   BasicBlock Name [Named Instruction] (Named Terminator)
@@ -1252,7 +1264,7 @@ If this is not yet reached, the loop body gets executed and the counter incremen
 If it is, then the loop exits and the next expression is evaluated.
 Figure \ref{fig:forchart} shows the process.
 
-\begin{figure}
+\begin{figure}[h]
 \begin{center}
 \begin{tikzpicture}[node distance=2cm]
 \node (start) [startstop] {Start};
@@ -1278,7 +1290,7 @@ To translate this into LLVM, I need a label, the name of the counter, it's minim
 In a normal language these would be sufficient.
 LLVM doesn't have mutable variables, however.
 This means that any state, like an accumulator, needs to be explicitly defined.
-The syntax I chose for this is the following:
+The syntax I chose for this is:
 
 \begin{lstlisting}[numbers=none]
 for <ty1> <var1> in <val1> to <val2>
@@ -1332,9 +1344,9 @@ This makes defining complex functions nearly impossible.
 But even with GHC 7.8 you get some warnings when splicing code in rather than at it's definition site.
 For example, it is not checked if a pattern match is exhaustive.
 Although this check could be done in the type checker, it is done while desugaring to core.
-I filed this as a bug in GHC (\#9113) and it seems that there is work done which would solve this issue.
+I filed this as a bug in GHC and it seems that there is work done which would solve this issue.\footnote{\url{https://ghc.haskell.org/trac/ghc/ticket/9113}}
 
-\subsection{nextblock}
+\subsection{Continue to next block}
 In principle basic blocks are not ordered.
 The only exception is the first block, which also cannot have any predecessors.
 In reality however, they are mostly ordered in the order of control flow.
@@ -1356,13 +1368,7 @@ br label nextblock
 \end{lstlisting}
 When processing the list of all basic blocks, this can be replaced with the correct label.
 
-\subsection{Antiquotation}
-I have so far ignored how antiquotation is handled.
-When antiquoting a value, it is usually inserted directly into the AST.
-This is straight forward for things like \lstinline[language=haskell]!Type!s, \lstinline[language=haskell]!Constant!s and \lstinline[language=haskell]!Operand!s.
-It would be useful however to also antiquote sequences of code.
-
-The existing code in accelerate-llvm uses the \lstinline[language=haskell]!CodeGen! monad to produce code.
+\begin{figure}[h]
 \begin{lstlisting}[language=haskell]
 data CodeGenState = CodeGenState
   { blockChain          :: Seq Block
@@ -1385,7 +1391,17 @@ newtype CodeGen a =
     deriving ( Functor, Applicative, Monad
              , MonadState CodeGenState)
 \end{lstlisting}
+\caption{\lstinline!CodeGen! Monad}
+\label{fig:codegen}
+\end{figure}
 
+\subsection{Antiquotation}
+I have so far ignored how antiquotation is handled.
+When antiquoting a value, it is usually inserted directly into the AST.
+This is straight forward for things like \lstinline[language=haskell]!Type!s, \lstinline[language=haskell]!Constant!s and \lstinline[language=haskell]!Operand!s.
+It would be useful however to also antiquote sequences of code.
+
+The existing code in accelerate-llvm uses the \lstinline[language=haskell]!CodeGen! monad shown in figure \ref{fig:codegen} to produce code.
 This monad collects instructions into unfinished blocks.
 When all blocks are finished, it is then possible to convert these into a list of \lstinline[language=haskell]!BasicBlock!s.
 The interesting return values are of type \lstinline[language=haskell]!Operand! or \lstinline[language=haskell]![Operand]!.
@@ -1429,10 +1445,12 @@ LLVM doesn't support mutable variables however.
 Since I need however, I implemented support for them through my quasiquoter.
 The implementation is described in section \ref{sec:ssa}.
 
+\begin{minipage}{\textwidth}
 With this idea, the syntax for the for loop is now reduced to
 \begin{lstlisting}[numbers=none]
 for <ty1> <var1> in <val1> to <val2> { <loop body> }
 \end{lstlisting}
+\end{minipage}
 This is a great improvement upon the first approach.
 The main benefit now is the increased flexibility.
 It is also more concise and doesn't abuse the return to pass through variables.
@@ -1467,13 +1485,28 @@ The LLVM optimizer then uses the mem2reg pass to transform these into registers,
 
 Since one of the goals of the quasiquoter was to produce llvm-code that is as close to what the programmer wrote as possible, I decided against this approach.
 Instead I do the transformation myself.
-To this end, I provide a single function
+To this end, I provide a single function \lstinline[language=haskell]!toSSA!.
+This is called with the list of all \lstinline[language=haskell]!BasicBlock!'s of a given function.
 
+\begin{figure}
 \begin{lstlisting}[language=haskell]
 toSSA :: [BasicBlock] -> [BasicBlock]
-\end{lstlisting}
+toSSA bbs = runST $ do
+  cfg <- toCFG $ bbs
+  ctr <- newSTRef 1
 
-This is called with the list of all \lstinline[language=haskell]!BasicBlock!'s of a given function.
+  -- process all Instructions
+  mapM_ (blockToSSAPre ctr) (map snd cfg)
+  -- replace names in Phis with correct references
+  mapM_ (blockToSSAPhi ctr cfg) (map snd cfg)
+  -- replace names in newly added Phis with correct references
+  handleIncompletePhis ctr cfg
+
+  fromCFG cfg
+\end{lstlisting}
+\caption{\lstinline[language=haskell]!toSSA!}
+\label{fig:tossa}
+\end{figure}
 
 To produce SSA form, variables have to be versioned, so that it is clear which value it holds at each given time.
 There are a multitude of algorithms to do this.
@@ -1483,7 +1516,7 @@ An easier approach was presented by \citeauthor{braun13simple}.
 
 In this algorithm, the SSA is produced directly from the AST, without the need of extra analysis passes.
 To do this, the definitions of variables are tracked and updated as necessary.
-Without $\Phi$nodes, this is straight forward, as Figure \ref{fig:localnum} shows.
+Without $\Phi$nodes, this is straight forward, as figure \ref{fig:localnum} shows.
 
 \begin{figure}
 \begin{lstlisting}[language=ruby]
@@ -1535,8 +1568,7 @@ The obvious choices are \lstinline[language=haskell]!State! and \lstinline[langu
 \lstinline[language=haskell]!IO! also provides mutable state, but is not an option here, since there is no safe way of running it in a pure context.
 I use \lstinline[language=haskell]!ST!, since it natively provides an arbitrary number of mutable variables with direct access.
 
-To use this however, the \lstinline[language=haskell]!BasicBlock!s have to be in a mutable format.
-
+\begin{figure}
 \begin{lstlisting}[language=haskell]
 type CFG s =[(Name, MutableBlock s)]
 
@@ -1554,7 +1586,11 @@ data MutableBlock s = MutableBlock {
 type MutableInstruction s = STRef s (Named Instruction)
 type MutableTerminator  s = STRef s (Named Terminator)
 \end{lstlisting}
+\caption{Mutable blocks}
+\label{fig:blockmut}
+\end{figure}
 
+To use this however, the \lstinline[language=haskell]!BasicBlock!s have to be in a mutable format (figure \ref{fig:blockmut}).
 Although not everything is mutable in this representation, it is sufficient.
 After the conversion, the \lstinline[language=haskell]!BasicBlock!s can be processed one by one.
 First, the variables created by \lstinline[language=haskell]!Instruction!s are adjusted.
@@ -1568,31 +1604,9 @@ These are handled last by reading the variable in all preceding blocks and repla
 Since this involved reading however, new incomplete \lstinline[language=haskell]!Phi! instructions can be added in the process.
 To handle all of them, the function is executed until there are no incomplete \lstinline[language=haskell]!Phi! instructions.
 
-Figure \ref{fig:tossa} shows the complete \lstinline[language=haskell]!toSSA! function.
-
-\begin{figure}
-\begin{lstlisting}[language=haskell]
-toSSA :: [BasicBlock] -> [BasicBlock]
-toSSA bbs = runST $ do
-  cfg <- toCFG $ bbs
-  ctr <- newSTRef 1
-
-  -- process all Instructions
-  mapM_ (blockToSSAPre ctr) (map snd cfg)
-  -- replace names in Phis with correct references
-  mapM_ (blockToSSAPhi ctr cfg) (map snd cfg)
-  -- replace names in newly added Phis with correct references
-  handleIncompletePhis ctr cfg
-
-  fromCFG cfg
-\end{lstlisting}
-\caption{\lstinline[language=haskell]!toSSA!}
-\label{fig:tossa}
-\end{figure}
-
 \chapter{Skeletons}
 The skeletons are one of the core components of an accelerate backend.
-They provide the functionality of a given array function like \lstinline[language=haskell]!map! or \lstinline[language=haskell]!fold!.
+They provide the functionality of a given array function like \lstinline[language=haskell]!map! or \lstinline[language=haskell,morekeywords={fold}]!fold!.
 They are basically functions that given extra arguments for array environment and higher order function generate a concrete function which can then be compiled.
 In accelerate-llvm, this process is abstracted through a typeclass.
 \begin{lstlisting}[language=haskell]
@@ -1606,13 +1620,15 @@ class Skeleton arch where
 \end{lstlisting}
 Each of the different functions in this class corresponds to a specific skeleton.
 
-When implementing parallel algorithms, it often becomes more complicated.
+Not all functions have an efficient parallel implementation.
 Accelerate was specifically designed to only consist of operations that can be implemented efficiently.
 
 In the following, I will go through the skeletons one by one.
-\section{generate}
+\section{Generate}
 The simplest skeleton is \lstinline[language=haskell]!generate!.
 As the name suggests, it produces an array with just a function from index to a value.
+
+\begin{minipage}{\textwidth}
 \begin{lstlisting}[language=haskell]
 mkGenerate
     :: forall arch aenv sh e. (Shape sh, Elt e)
@@ -1620,6 +1636,8 @@ mkGenerate
     -> IRFun1 aenv (sh -> e)
     -> CodeGen [Kernel arch aenv (Array sh e)]
 \end{lstlisting}
+\end{minipage}
+
 Before the actual quasiquoted llvm code, we have to set up some values first.
 The first thing we need are the parameters for the output array and the array environment.
 The start and stop indices are also required.
@@ -1665,13 +1683,13 @@ The rest is then relatively self-explaining.
     }
   |]
 \end{lstlisting}
-\subsection*{vectorization}
+\subsection*{Vectorization}
 If \lstinline[language=haskell]!generate! vectorizes is very dependent on the supplied function.
 A function which randomly references a different manifest array would not vectorize for example.
 The challinging part for the optimizer are the multidimensional indices.
 This means the chance of vectorization is much higher if the target is just a vector.
 
-\section{map}
+\section{Map}
 \lstinline[language=haskell]!map! works similar to \lstinline[language=haskell]!generate!.
 In fact it can be easily implemented using \lstinline[language=haskell]!generate!.
 One important difference between \lstinline[language=haskell]!generate! and \lstinline[language=haskell]!map! is how they access the array.
@@ -1707,12 +1725,12 @@ makeKernelQ "map" [llgM|
   |]
 \end{lstlisting}
 
-\subsection*{vectorization}
+\subsection*{Vectorization}
 \lstinline[language=haskell]!map! vectorizes far better than \lstinline[language=haskell]!generate!.
 If the supplied array is manifest, no index conversion is necessary.
 If the function doesn't contain branches, then it is very likely that vectorization is possible.
 
-\section{transform}
+\section{Transform}
 \lstinline[language=haskell]!transform! is closely related to map.
 The difference is, that the index is not preserved.
 Instead there is another function which projects an index in the target array into an index in the source array.
@@ -1741,7 +1759,7 @@ defaultTransform arch aenv p f IRDelayed{..} =
     f a
 \end{lstlisting}
 
-\subsection*{vectorization}
+\subsection*{Vectorization}
 If \lstinline[language=haskell]!transform! vectorizes is very dependent on the functions involved.
 In case of a simple identity (\lstinline[language=haskell]!map!) it will vectorize just fine.
 It is however really not at all guaranteed, that it will vectorize.
@@ -1775,7 +1793,7 @@ LLVM uses \lstinline{shufflevector} to achieve this.
 ...
 \end{lstlisting}
 
-\subsection{backpermute}
+\subsection{Backpermute}
 Accelerate handles a special case of \lstinline[language=haskell]!transform! as \lstinline[language=haskell]!backpermute!.
 This is essentially just a transform without the map functionality.
 We don't have a specific implementation of \lstinline[language=haskell]!backpermute!, but rather use \lstinline[language=haskell]!transform!.
@@ -1791,7 +1809,7 @@ defaultBackpermute arch aenv p a
     = transform arch aenv p return a
 \end{lstlisting}
 
-\section{permute}
+\section{Permute}
 \lstinline[language=haskell]!permute! is analog to \lstinline[language=haskell]!backpermute!.
 Instead of projecting every cell of the target array onto a cell in the source array, the opposite is done.
 Every cell in the source array is projected onto one or no cell in the target array.
@@ -1884,7 +1902,7 @@ This will be translated into just a MOV instruction.
 This is possible due to subtle memory ordering rules which allow this, even though MOV is not a full memory barrier.
 In case of other architectures like ARM a MOV is not sufficient here.
 
-\subsection*{vectorization}
+\subsection*{Vectorization}
 Vectorization is not possible in case of \lstinline[language=haskell]!permute!.
 In every step, the same cell in the output array is both read and written.
 The only way this could possibly vectorize is if this index was predictable.
@@ -1895,7 +1913,7 @@ It may be beneficial to supply an additional implementation for single-threaded 
 This would not need the extra array of semaphores.
 I leave this evaluation for future work.
 
-\section{fold}
+\section{Fold}
 In Haskell, a fold reduces a list to a single value.
 The equivalent would be to reduce a vector to a scalar.
 While Accelerate also supports this, it has a more general view.
@@ -1914,6 +1932,8 @@ mkFold
 
 The natural unit of computation for a fold is one element in the output array.
 This degree of parallelism can be achieved without multiple passes.
+Figure \ref{fig:foldskel} shows the skeleton code for \lstinline[language=haskell]!fold!.
+\begin{figure}
 \begin{lstlisting}
 makeKernelQ "fold" [llgM|
   define void @fold
@@ -1945,27 +1965,30 @@ makeKernelQ "fold" [llgM|
   }
 |]
 \end{lstlisting}
+\caption{Fold skeleton}
+\label{fig:foldskel}
+\end{figure}
 This works great if the output still has a dimension left.
 If the output is a skalar however, it doesn't work that well.
 Instead, the array is reduced in multiple steps.
 The first step is to create an array of partial sums.
 This array can then be reduced by a single thread sequentially.
 
-\subsection{Segmented fold}
+\subsection{Segmented Fold}
 The segmented fold is a generalization of the regular fold.
 The regular fold reduces the inner dimension to a single value.
 The segmented fold reduces segments of the inner dimension into single values.
 This way the dimensionality of the resulting array is the same as the incoming array.
 The degree of parallelism is increased by the same amount as there are segments.
 
-\subsection*{vectorization}
+\subsection*{Vectorization}
 In general, \lstinline[language=haskell]!fold! doesn't vectorize very well.
 \lstinline[language=haskell]!fold! requires it's input function to be associative.
 For LLVMs loop vectorization to work however, it also needs to be commutative.
 Many associative functions are also commutative however.
 This means that these cases will vectorize well.
 
-\section{scan}
+\section{Prefix Sum (Scan)}
 Scan (or prefix sum) is closely related to fold.
 Instead of just providing one value at the end however, it produces all the values in between.
 In contrast to fold, scan only operates on vectors.
@@ -2018,11 +2041,7 @@ makeKernelQ "scanl" [llgM|
       $params:paramEnv
   )
   {
-      for $type:intType %i in $opr:start to $opr:end
-      {
 ...
-      }
-      ret void
   }
 |]
 \end{lstlisting}
@@ -2034,24 +2053,31 @@ This is necessary to handle the last chunk as it is not of full length.
 The first step then is the scan over the previously computed sums.
 The seed element is also written to the first array index in this step.
 \begin{lstlisting}
-;; sum up the partial sums to get the first element
-$bbsM:(acc .=. seed)
-
-for $type:intType %k in 0 to %i
+for $type:intType %i in $opr:start to $opr:end
 {
-     $bbsM:(x .=. delayedLinearIndex tmpD [k])
-     $bbsM:(acc .=. combine x acc)
-}
+  ;; sum up the partial sums to get the first element
+  $bbsM:(acc .=. seed)
 
-;; check if this is the first chunk
-%c2 = icmp eq $type:intType %i, 0
-;; if it is, write the seed to memory
-if %c2 {
-    %c3 = icmp ne $type:intType %sz, 0
+  for $type:intType %k in 0 to %i
+  {
+    $bbsM:(x .=. delayedLinearIndex tmpD [k])
+    $bbsM:(acc .=. combine x acc)
+  }
+
+  ;; check if this is the first chunk
+  % c2 = icmp eq $type:intType %i, 0
+  ;; if it is, write the seed to memory
+  if %c2 {
+    % c3 = icmp ne $type:intType %sz, 0
     if %c3 {
-        $bbsM:(writeArray arrOut zero acc)
+      $bbsM:(writeArray arrOut zero acc)
     }
+  }
+
+...
+
 }
+ret void
 \end{lstlisting}
 The outer loop just gives the chunk number.
 This has to be converted into a usable range first.
@@ -2082,12 +2108,12 @@ It is only necessary to supply an empty array of precalculated sums.
 This way the scan over that array yields the just seed element.
 This is then used to compute the prefix sum directly.
 
-\subsection*{vectorization}
+\subsection*{Vectorization}
 The steps equivalent to a fold vectorize very well.
 The this is in essence all but the last step.
 The actual prefix sum cannot be vectorized, as all the intermediate values have to be written to memory.
 
-\section{stencil}
+\section{Stencil}
 Stencil operations are basically a generalization of map.
 The difference is that the focus is not on a single element.
 Instead it also looks at the surrounding cells.
@@ -2118,15 +2144,17 @@ They can be divided into 2 groups.
 All except \lstinline[language=haskell]!Constant! rely on index manipulation.
 \lstinline[language=haskell]!Constant! on the other hand does no read at all if the read would be out of bounds.
 I use a single function \lstinline[language=haskell]!access! to deal with all of these cases.
-The returned value is a the value read at the given index modulo the boundary condition.
+The returned value is the value read at the given index modulo the boundary condition.
 I start by applying the offset to the index.
 If the offset is 0 in every direction however, the read can be done directly.
 \begin{lstlisting}[language=haskell]
 access bndy sh ix arr off =
   if all (==0) off
-    then do
-      i <- intOfIndex sh ix
-      readArray arr i
+    then do i <- intOfIndex sh ix
+            readArray arr i
+\end{lstlisting}
+If not, then the offset has to be applied.
+\begin{lstlisting}[language=haskell]
     else do
       ix' <- zipWithM (add int . (constOp . num int)) off ix
 \end{lstlisting}
@@ -2188,8 +2216,13 @@ They are necessary however, as those are just type synonyms.
 Apart from this oddity, there isn't much happening in this function.
 It mainly combines existing offsets and applies the \lstinline[language=haskell]!access! function.
 
-All that remains now is the actual skeleton code.
+All that remains now is the actual skeleton code shown in figure \ref{fig:stencilskel}.
 This looks very similar to the \lstinline[language=haskell]!map! skeleton.
+Unfortunately I wasn't able to store the result of \lstinline[language=haskell]!stencilAccess!, as I don't have \lstinline[language=haskell]!(Elt stencil)! in context.
+This is mainly due to the use of type families in the definition of the \lstinline[language=haskell]!Stencil! typeclass.
+The code for \lstinline[language=haskell]!stencil2! is analogous.
+
+\begin{figure}[ht]
 \begin{lstlisting}
 makeKernelQ "stencil" [llgM|
   define void @stencil
@@ -2211,11 +2244,11 @@ makeKernelQ "stencil" [llgM|
   }
 |]
 \end{lstlisting}
-Unfortunately I wasn't able to store the result of \lstinline[language=haskell]!stencilAccess!, as I don't have \lstinline[language=haskell]!(Elt stencil)! in context.
-This is mainly due to the use of type families in the definition of the \lstinline[language=haskell]!Stencil! typeclass.
-The code for \lstinline[language=haskell]!stencil2! is analogous.
+\caption{Stencil skeleton}
+\label{fig:stencilskel}
+\end{figure}
 
-\subsection*{vectorization}
+\subsection*{Vectorization}
 The stencil code doesn't vectorize at all at the moment.
 The reason for this is the boundary.
 If the whole stencil is guaranteed to be in bounds, the bounds check could be omitted however.
