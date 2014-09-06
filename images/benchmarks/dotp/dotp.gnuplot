@@ -10,7 +10,7 @@ set key bottom
 
 set xlabel "Elements (millions)"
 set logscale x
-set xrange [1.5:25]
+set xrange [1.8:22]
 
 set xtics (2, 4, 6, 8, 10, 12, 14, 16, 18, 20)
 

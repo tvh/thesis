@@ -20,8 +20,9 @@
 \usepackage{subcaption}
 \usepackage{captcont}
 \usepackage{float}
-\usepackage{hyperref}
 \usepackage{parskip}
+\usepackage{microtype}
+\usepackage{hyperref}
 \recalctypearea
 \usetikzlibrary{shapes.geometric, arrows}
 
@@ -150,7 +151,7 @@ The main execution target of this language is GPUs using the parallel computatio
 
 \citeauthor{trevor2014llvm} started working on an alternative implementation using the LLVM compiler framework.
 I contribute to this work by implementing a different approach to code-generation for LLVM using quasi-quotation.
-I use this quasi-quoter to implement the skeletons in the LLVM backend.
+I use this quasi-quoter to implement missing parts in the code generation of the LLVM backend.
 
 % Verzeichnisse
 %\listoftodos
@@ -188,10 +189,11 @@ dotp_list :: [Float] -> [Float] -> Float
 dotp_list xs ys =
   foldl' (+) 0 (zipWith (*) xs ys)
 \end{lstlisting}
+
+\begin{minipage}{\linewidth}
 This code is purely sequential however and is therefore limited to only one CPU.
 Accelerate allows you to write this computation in nearly exactly the same way:
 
-\begin{minipage}{\textwidth}
 \begin{lstlisting}[language=haskell]
 dotp :: Acc (Vector Float)
      -> Acc (Vector Float)
@@ -321,12 +323,11 @@ To build the sum, every element of the array is added to an accumulator.
 Since addition is associative and commutative, the additions can be reordered.
 Given a vector width of 2, the sum of the odd and even elements are calculated in parallel and then added together.
 In addition to this, the vectorizer will also unroll the inner loop to make fewer jumps necessary.
-Figure \ref{fig:sumllvec} shows the corresponding llvm code without loop unroll, as this increases code size dramatically.
+Figure \ref{fig:sumllvec} shows the corresponding LLVM code without loop unroll, as this increases code size dramatically.
 
-\begin{figure}
+\begin{figure}[!htpb]
 \caption{Vectorized Sum}
 \label{fig:sumllvec}
-\begin{subfigure}{\textwidth}
 \begin{lstlisting}
 define i32 @sum(i32* nocapture readonly %a, i32 %length) {
 entry:
@@ -354,7 +355,12 @@ vector.body:          ; preds = %for.body.preheader, %vector.body
   %index.next = add i64 %index, 2
   %6 = icmp eq i64 %index.next, %n.vec
   br i1 %6, label %middle.block, label %vector.body
+\end{lstlisting}
+\end{figure}
 
+\begin{figure}
+\ContinuedFloat
+\begin{lstlisting}
 middle.block:         ; preds = %vector.body, %for.body.preheader
   %resume.val = phi i64 [ 0, %for.body.preheader ],
                         [ %n.vec, %vector.body ]
@@ -368,14 +374,7 @@ middle.block:         ; preds = %vector.body, %for.body.preheader
   %7 = extractelement <2 x i32> %bin.rdx, i32 0
   %cmp.n = icmp eq i64 %end.idx, %resume.val
   br i1 %cmp.n, label %for.end, label %for.body
-\end{lstlisting}
-\end{subfigure}
-\end{figure}
 
-\begin{figure}
-\ContinuedFloat
-\begin{subfigure}{\textwidth}
-\begin{lstlisting}
 for.body:             ; preds = %middle.block, %for.body
   %indvars.iv = phi i64 [ %indvars.iv.next, %for.body ],
                         [ %resume.val, %middle.block ]
@@ -395,7 +394,7 @@ for.end:              ; preds = %for.body, %middle.block, %entry
   ret i32 %x.0.lcssa
 }
 \end{lstlisting}
-\end{subfigure}
+\caption[]{Vectorized Sum (continued)}
 \end{figure}
 
 Apart from reductions, LLVM can also vectorize the following:
@@ -515,8 +514,9 @@ Using an ADT instead of writing directly to the C++ object has many advantages.
 This way, the code can be produced and manipulated outside the IO context.
 It is also much easier to reason about within Haskell.
 
+\newpage
 llvm-general also supports optimization and jit-compilation.
-To use the optimization, there are
+To use the optimization, there are:
 \begin{lstlisting}[language=haskell]
 withPassManager :: PassSetSpec -> (PassManager -> IO a) -> IO a
 runPassManager :: PassManager -> Module -> IO Bool
@@ -593,6 +593,7 @@ type DIM1 = DIM0 :. Int
 type DIM2 = DIM1 :. Int
 ...
 \end{lstlisting}
+\newpage
 and
 \begin{lstlisting}[language=haskell]
 type Scalar a = Array DIM0 a
@@ -667,7 +668,7 @@ void map
 
 Instead of the single array for input and output however, there will often be multiple.
 This is because a singe array in Accelerate be represented by multiple arrays internally.
-
+\newpage
 \subsection{Fusion}
 Consider the following example from earlier.
 \begin{lstlisting}[language=haskell]
@@ -1036,7 +1037,7 @@ The available antiquotations are:
 \end{itemize}
 
 \subsection{Syntax Extensions}
-llvm-general-quote supports all llvm instructions.
+llvm-general-quote supports all LLVM instructions.
 For better usage however, I added control structures like the for loop discussed earlier.
 
 \begin{itemize}[noitemsep]
@@ -1483,7 +1484,7 @@ This is negligible however, as it is easily removed by LLVM's constant propagati
 The standard method of producing SSA form in LLVM is to use stack allocated variables instead of registers to store values.
 The LLVM optimizer then uses the mem2reg pass to transform these into registers, adding the necessary phi-nodes in the process.
 
-Since one of the goals of the quasiquoter was to produce llvm-code that is as close to what the programmer wrote as possible, I decided against this approach.
+Since one of the goals of the quasiquoter was to produce LLVM~code that is as close to what the programmer wrote as possible, I decided against this approach.
 Instead I do the transformation myself.
 To this end, I provide a single function \lstinline[language=haskell]!toSSA!.
 This is called with the list of all \lstinline[language=haskell]!BasicBlock!'s of a given function.
@@ -1513,7 +1514,6 @@ There are a multitude of algorithms to do this.
 The one most widely used (including in LLVM) is \citeauthor{cytron91efficiently}'s algorithm.
 It is however is rather involved as it relies on dominance frontiers.
 An easier approach was presented by \citeauthor{braun13simple}.
-
 In this algorithm, the SSA is produced directly from the AST, without the need of extra analysis passes.
 To do this, the definitions of variables are tracked and updated as necessary.
 Without $\Phi$nodes, this is straight forward, as figure \ref{fig:localnum} shows.
@@ -1545,7 +1545,7 @@ In case the input is an unordered list of blocks however, I can't make predictio
 Instead I assume that no block is processed until all blocks are.
 Figure \ref{fig:globalnum} shows the modified \lstinline[language=haskell]!readVariableRecursive!.
 
-\begin{figure}
+\begin{figure}[t]
 \begin{lstlisting}[language=ruby]
 readVariableRecursive(variable, block):
     if |block.preds| = 0:
@@ -1608,7 +1608,9 @@ To handle all of them, the function is executed until there are no incomplete \l
 The skeletons are one of the core components of an accelerate backend.
 They provide the functionality of a given array function like \lstinline[language=haskell]!map! or \lstinline[language=haskell,morekeywords={fold}]!fold!.
 They are basically functions that given extra arguments for array environment and higher order function generate a concrete function which can then be compiled.
-In accelerate-llvm, this process is abstracted through a typeclass.
+
+One of the goals of accelerate-llvm was to abstract out the concrete backend involved to reuse parts for goth CPU and GPU where possible.
+To do this, in accelerate-llvm, there is a typeclass which handles the instantiation of skeletons:
 \begin{lstlisting}[language=haskell]
 class Skeleton arch where
   generate      :: (Shape sh, Elt e)
@@ -1616,52 +1618,60 @@ class Skeleton arch where
                 -> Gamma aenv
                 -> IRFun1 aenv (sh -> e)
                 -> CodeGen [Kernel arch aenv (Array sh e)]
+  map           :: (Shape sh, Elt a, Elt b)
+                => arch
+                -> Gamma aenv
+                -> IRFun1    aenv (a -> b)
+                -> IRDelayed aenv (Array sh a)
+                -> CodeGen [Kernel arch aenv (Array sh b)]
   ...
 \end{lstlisting}
 Each of the different functions in this class corresponds to a specific skeleton.
 
-Not all functions have an efficient parallel implementation.
-Accelerate was specifically designed to only consist of operations that can be implemented efficiently.
-
 In the following, I will go through the skeletons one by one.
+I will also explore how well they respond to the LLVM auto voctorization.
+
 \section{Generate}
 The simplest skeleton is \lstinline[language=haskell]!generate!.
 As the name suggests, it produces an array with just a function from index to a value.
 
 \begin{minipage}{\textwidth}
 \begin{lstlisting}[language=haskell]
-mkGenerate
-    :: forall arch aenv sh e. (Shape sh, Elt e)
+mkGenerate :: forall arch aenv sh e. (Shape sh, Elt e)
     => Gamma aenv
     -> IRFun1 aenv (sh -> e)
     -> CodeGen [Kernel arch aenv (Array sh e)]
 \end{lstlisting}
 \end{minipage}
 
-Before the actual quasiquoted llvm code, we have to set up some values first.
-The first thing we need are the parameters for the output array and the array environment.
-The start and stop indices are also required.
+Before the actual quasiquoted LLVM code, we have to set up some values first.
+The first thing we need are the parameters for the output array.
+The output array consists of multiple points of information.
+There is the actual array data \lstinline!arrOut! and the shape information \lstinline!shOut!.
+The array data is passed in as a set of pointers to the different unboxed arrays making up the Accelerate array.
+Both of these are also included as parameters to use in the function head in \lstinline!paramOut!.
+The source arrays are part of an array environment, which also has to be included as a parameter to the function.
+Since the function doesn't process the whole array at once, it has to also be supplied with information about where to start and stop.
 \begin{lstlisting}[language=haskell]
-mkGenerate aenv apply =
-  let
-      arrOut   = arrayDataOp  (undefined::Array sh e) "out"
+mkGenerate aenv apply = do
+  let arrOut   = arrayDataOp  (undefined::Array sh e) "out"
       shOut    = arrayShapeOp (undefined::Array sh e) "out"
       paramOut = arrayParam   (undefined::Array sh e) "out"
       paramEnv = envParam aenv
       (start, end, paramGang)
                = gangParam
 \end{lstlisting}
-The last piece before the actual code are some declarations for used types and local variables.
+Unfortunately it is necessary to also declare all used local variables beforehand.
+This is only necessary for those variables that are used in antiquotations.
 \begin{lstlisting}[language=haskell]
       intType  = typeOf (int :: IntegralType Int)
-
       r        = locals (undefined::e) "r"
       i        = local intType "i"
       ix       = locals (undefined::sh) "ix"
 \end{lstlisting}
-The rest is then relatively self-explaining.
+With these bindings in place, I can define the actual skeleton.
+First I have to set up the function head with the parapeters:
 \begin{lstlisting}
-  in
   makeKernelQ "generate" [llgM|
     define void @generate
     (
@@ -1669,6 +1679,14 @@ The rest is then relatively self-explaining.
         $params:paramOut,
         $params:paramEnv
     )
+\end{lstlisting}
+\lstinline!makeKernelQ! packs the value generated by the quasiquoter into a \lstinline!Kernel!.
+This a wrapper around the function that is used to select the correct compiler via it's type argument.
+
+The inner loop of \lstinline!generate! is straight forward.
+It has to convert the linear into a multidimensional index.
+This index is then used to generate the correct value for the cell which is then stored directly.
+\begin{lstlisting}
     {
         for $type:intType %i in $opr:start to $opr:end
         {
@@ -1703,8 +1721,9 @@ mkMap :: forall t aenv sh a b. (Elt b, Elt a)
       -> IRDelayed aenv (Array sh a)
       -> CodeGen [Kernel t aenv (Array sh b)]
 \end{lstlisting}
-The following is the core part of the \lstinline[language=haskell]!map! skeleton.
+Figure~\ref{fig:mapskel} shows the core part of the \lstinline[language=haskell]!map! skeleton.
 I omit the rest of the function as the difference to \lstinline[language=haskell]!generate! is mostly mechanical.
+\begin{figure}
 \begin{lstlisting}
 makeKernelQ "map" [llgM|
     define void @map
@@ -1724,6 +1743,9 @@ makeKernelQ "map" [llgM|
     }
   |]
 \end{lstlisting}
+\caption{Map Skeleton}
+\label{fig:mapskel}
+\end{figure}
 
 \subsection*{Vectorization}
 \lstinline[language=haskell]!map! vectorizes far better than \lstinline[language=haskell]!generate!.
@@ -1774,7 +1796,7 @@ in backpermute
 All this code does is rotate the array to the right by one element and then adding one.
 This code, if optimized by hand, could be easily vectorized.
 
-To give another positive example, let's look at the reversal of an array.
+To give another positive example, let's look at the reversal of an array:
 \begin{lstlisting}[language=haskell]
 let a0 = use (Array (Z :. 10) [1,2,3,4,5,6,7,8,9,10])
 in transform
@@ -1783,8 +1805,9 @@ in transform
      (\x0 -> 1 + x0)
      a0
 \end{lstlisting}
+\begin{minipage}{\textwidth}
 This vectorizes just fine.
-LLVM uses \lstinline{shufflevector} to achieve this.
+LLVM uses \lstinline{shufflevector} to achieve this:
 \begin{lstlisting}
 ...
 %reverse = shufflevector <4 x i64> %wide.load,
@@ -1792,8 +1815,9 @@ LLVM uses \lstinline{shufflevector} to achieve this.
                          <4 x i32> <i32 3, i32 2, i32 1, i32 0>
 ...
 \end{lstlisting}
+\end{minipage}
 
-\subsection{Backpermute}
+\section{Backpermute}
 Accelerate handles a special case of \lstinline[language=haskell]!transform! as \lstinline[language=haskell]!backpermute!.
 This is essentially just a transform without the map functionality.
 We don't have a specific implementation of \lstinline[language=haskell]!backpermute!, but rather use \lstinline[language=haskell]!transform!.
@@ -1854,9 +1878,7 @@ This is signalled by a magic value \lstinline[language=haskell]!ignore!.
 In this case the inner loop is empty.
 \begin{lstlisting}
 $bbsM:(c1 .=. all (uncurry (neq int)) (zip ix' ignore))
-if %c1 {
-...
-}
+if %c1 { ... }
 \end{lstlisting}
 If the value is not ignored, the permutation step will be executed.
 \begin{lstlisting}
@@ -1933,7 +1955,14 @@ mkFold
 The natural unit of computation for a fold is one element in the output array.
 This degree of parallelism can be achieved without multiple passes.
 Figure \ref{fig:foldskel} shows the skeleton code for \lstinline[language=haskell]!fold!.
-\begin{figure}
+
+This works great if the output still has a dimension left.
+If the output is a skalar however, it doesn't work that well.
+Instead, the array is reduced in multiple steps.
+The first step is to create an array of partial sums.
+This array can then be reduced by a single thread sequentially.
+
+\begin{figure}[h]
 \begin{lstlisting}
 makeKernelQ "fold" [llgM|
   define void @fold
@@ -1965,14 +1994,9 @@ makeKernelQ "fold" [llgM|
   }
 |]
 \end{lstlisting}
-\caption{Fold skeleton}
+\caption{Fold Skeleton}
 \label{fig:foldskel}
 \end{figure}
-This works great if the output still has a dimension left.
-If the output is a skalar however, it doesn't work that well.
-Instead, the array is reduced in multiple steps.
-The first step is to create an array of partial sums.
-This array can then be reduced by a single thread sequentially.
 
 \subsection{Segmented Fold}
 The segmented fold is a generalization of the regular fold.
@@ -2045,10 +2069,12 @@ makeKernelQ "scanl" [llgM|
   }
 |]
 \end{lstlisting}
+\begin{minipage}{\textwidth}
 The gang parameters (start, stop) in this case are measured not in single elements, but in chunks.
 The size of these chunks is given by \lstinline{%chunksize}.
 The total length and the number of chunks is also provided.
 This is necessary to handle the last chunk as it is not of full length.
+\end{minipage}
 
 The first step then is the scan over the previously computed sums.
 The seed element is also written to the first array index in this step.
@@ -2079,6 +2105,7 @@ for $type:intType %i in $opr:start to $opr:end
 }
 ret void
 \end{lstlisting}
+\begin{minipage}{\textwidth}
 The outer loop just gives the chunk number.
 This has to be converted into a usable range first.
 \begin{lstlisting}
@@ -2091,6 +2118,8 @@ This has to be converted into a usable range first.
 %c1    = icmp eq $type:intType %i, %lastChunk
 %last  = select i1 %c1, $type:intType %sz, $type:intType %last1
 \end{lstlisting}
+\end{minipage}
+
 With the correct range and the prefixsum of all previous elements, the rest is easy.
 \begin{lstlisting}
 for $type:intType %k in %ix to %last
@@ -2187,12 +2216,16 @@ In case of \lstinline[language=haskell]!Constant! however this is a little more 
       zipWithM (\a x -> instr (typeOfOperand a)
                (Select c x a [])) as' xs
 \end{lstlisting}
+
+\newpage
 I prepare both the constant and the read value.
 I then do the bounds check and select either value depending on the result.
 To avoid out of bounds reads, I wrap the index before I read it.
 This is necessary since it is fairly easy to construct stencil functions that would end in a segfault otherwise.
 
-The complete stencil is then constructed via the function \lstinline[language=haskell]!stencilAccess!.
+
+\begin{minipage}{\textwidth}
+The complete stencil is then constructed via the function \lstinline[language=haskell]!stencilAccess!:
 \begin{lstlisting}[language=haskell]
 stencilAccess
   :: forall a b sh aenv stencil. (Shape sh, Stencil sh a stencil)
@@ -2204,25 +2237,27 @@ stencilAccess
   -> IRFun1 aenv (sh -> stencil)
 stencilAccess _ _ sh arr bndy ix = do
   let off  = offsets (undefined :: Fun aenv (stencil -> a))
-                        (undefined :: OpenAcc aenv (Array sh a))
+                     (undefined :: OpenAcc aenv (Array sh a))
       op   = map (constOp . num int) . reverse . shapeToList
       off' = map op off
   stencil <- mapM (access bndy sh ix arr) off'
   return (concat stencil)
 \end{lstlisting}
+\end{minipage}
+
 The \lstinline[language=haskell]!Proxy! values immediately look out of place.
 It seems that the types are already present in the \lstinline[language=haskell]!Boundary! and the result type.
 They are necessary however, as those are just type synonyms.
 Apart from this oddity, there isn't much happening in this function.
 It mainly combines existing offsets and applies the \lstinline[language=haskell]!access! function.
 
-All that remains now is the actual skeleton code shown in figure \ref{fig:stencilskel}.
+All that remains now is the actual skeleton code shown in figure~\ref{fig:stencilskel}.
 This looks very similar to the \lstinline[language=haskell]!map! skeleton.
 Unfortunately I wasn't able to store the result of \lstinline[language=haskell]!stencilAccess!, as I don't have \lstinline[language=haskell]!(Elt stencil)! in context.
 This is mainly due to the use of type families in the definition of the \lstinline[language=haskell]!Stencil! typeclass.
 The code for \lstinline[language=haskell]!stencil2! is analogous.
 
-\begin{figure}[ht]
+\begin{figure}[H]
 \begin{lstlisting}
 makeKernelQ "stencil" [llgM|
   define void @stencil
@@ -2298,22 +2333,22 @@ Independent of the image size, the Accelerate version is about 45\% faster than 
 \caption{Benchmarks raytracer}
 \end{figure}
 
+\newpage
 Accellerate-llvm has very heavy infrastructure in place to synchronize threads.
 The intuition is, that this might lead to decreased scalability.
 Figure \ref{fig:ray_scale} shows the speedup per core using the raytracer.
 As you can see, Accelerate performs basically identical to Repa in this regard.
 
-\section{N-Body}
-The $n$-body example simulates the Newtonian gravitational forces on a set of massive bodies in 3D space, using the na\"ive $\mathcal{O}\left( n^{2} \right)$ algorithm.
-In a data-parallel setting, the natural way to express this algorithm is first to compute the forces between every pair of bodies, before adding the forces applied to each body using a segmented sum.
-Figure \ref{fig:nbody} shows the results of this program in different settings.
-
-\begin{figure}
+\begin{figure}[th]
     \centering
     \includegraphics[width=0.8\textwidth]{images/benchmarks/nbody/nbody}
     \caption{Benchmark N-Body}
     \label{fig:nbody}
 \end{figure}
+\section{N-Body}
+The $n$-body example simulates the Newtonian gravitational forces on a set of massive bodies in 3D space, using the na\"ive $\mathcal{O}\left( n^{2} \right)$ algorithm.
+In a data-parallel setting, the natural way to express this algorithm is first to compute the forces between every pair of bodies, before adding the forces applied to each body using a segmented sum.
+Figure \ref{fig:nbody} shows the results of this program in different settings.
 
 After fusion, this example consists of a \lstinline[language=haskell]!generate! and a \lstinline[language=haskell]!map! kernel.
 Both of these vectorize well.
@@ -2348,10 +2383,12 @@ An example of the algorithm in action is shown in figure \ref{fig:lena}.
 \begin{subfigure}{0.5\textwidth}
     \centering
     \includegraphics[width=0.9\textwidth]{images/benchmarks/canny/lena}
+    \caption{Source Image}
 \end{subfigure}
 \begin{subfigure}{0.5\textwidth}
     \centering
     \includegraphics[width=0.9\textwidth]{images/benchmarks/canny/lena-edges}
+    \caption{Detected Edges}
 \end{subfigure}
 \caption{Canny Edge Detection}
 \label{fig:lena}
@@ -2412,7 +2449,6 @@ As seen in the dot product benchmark, Accelerate has a high overhead in the comp
 To understand what exactly the issue is, let's look a bit closer.
 
 The function responsible for this compilation is \lstinline[language=haskell]{compileForNativeTarget} shown in figure \ref{fig:compilenative}.
-
 Figure \ref{fig:compile} shows the runtime of each step.
 All runtimes are averaged over 10 runs.
 
@@ -2444,6 +2480,7 @@ Looking at the times, there are 3 main cost centres.
  \item getGlobalFunctions
 \end{itemize}
 
+\newpage
 These all live in the LLVM API and are therefore mostly independent of the Accelerate implemenation.
 It may be possible to reduce these through options to LLVM, but this is beyond the scope of this thesis.
 Another interesting aspect is, that the construction of the AST doesn't take up any significant amount of time.
@@ -2483,9 +2520,9 @@ compileForNativeTarget acc aenv = do
 \end{figure}
 
 \chapter{Conclusion}
-Prior to this thesis, only a handful of skeletons were implemented in the llvm backend to accelerate.
+Prior to this thesis, only a handful of skeletons were implemented in the LLVM backend to accelerate.
 These worked, but were hard to read as the tool used relied on manipulating blocks directly.
-In this thesis I presented an alternative approach to code generation for llvm.
+In this thesis I presented an alternative approach to code generation for LLVM.
 I implemented the remaining skeletons and rewrote the existing ones using my quasiquoter.
 The resulting code is much more legible and therefore maintainable than the purely monadic approach taken by previous work.
 
@@ -2499,6 +2536,8 @@ Using a foreign library in Haskell is often tedious, as the main documentation d
 LLVM is no exception to this, although the AST used is very well documented.
 This where the quasiquoter shines, as the instructions are exactly the same as documented in the language reference.
 
+\widowpenalty10000
+\clubpenalty10000
 Most languages model variables as cells in memory.
 This is fine, as LLVM is capable to lower these into register values if possible.
 The code already present in the LLVM backend didn't use this method however, so the quasiquoter doesn't use this mechanism.
@@ -2512,14 +2551,14 @@ Haskell offers a range of ways to implement operations on arrays effectively.
 The one most closely resembling Accelerate is Repa.
 As in the LLVM backend described in this thesis, it uses gang workers to execute computations on multiple CPUs concurrently.
 The important difference between Accelerate and Repa is the execution model.
-While Repa computations behave like any other Haskell computation, Accelerate behaves more like running a Monad.
+While Repa computations behave like any other Haskell computation, Accelerate behaves more like running a monad.
 Since Accelerate is device-independent, it has to compile the needed functions at runtime before the actual computation can occur.
 
-In terms of code generation, C-- most closely resembles the language I created.
+In terms of code generation, C-\hspace{0pt}- most closely resembles the language I created.
 It was designed as an intermediate language for compilers and is in use in GHC.
 It's design is inspired by C, but it replaces many language elements for clearer definitions.
 Like LLVM, it's type system is deliberately designed to reflect constraints of the underlying hardware.
-There is however no clear standard implementation for C--, making it more difficult to use than LLVM.
+There is however no clear standard implementation for C-\hspace{0pt}-, making it more difficult to use than LLVM.
 
 \section{Future Work}
 I developed the quasiquoter mainly as a tool to use for skeleton code generation.
@@ -2531,15 +2570,16 @@ It produces code with far too many \lstinline!phi! instructions.
 LLVM is capable of eliminating those redundant instructions, but an optimization pass is necessary for this.
 If the code is to be printed directly however, this produces non-optimal code.
 
+\newpage
 With my contribution, the LLVM backend is almost functionally complete and passes all existing tests.
 The performance is promising, outrunning Repa in most cases.
 There is however much room for improvement as not all skeletons vectorize as well as they possibly could.
 Stencil convolutions for example don't vectorize at all at the moment, although they could if implemented with this in mind.
 
 Although it is functionally almost complete, it is not ready for a release yet.
-The major part still missing is the support for FFI (\href{https://github.com/AccelerateHS/accelerate/issues/183}{\#183}).
+The major part still missing is the support for FFI\footnote{\url{https://github.com/AccelerateHS/accelerate/issues/183}}.
 There are also still a number of bugs that have to be addressed first.
-These range from space leaks (\href{https://github.com/AccelerateHS/accelerate/issues/181}{\#181}) to random segfaults (\href{https://github.com/AccelerateHS/accelerate/issues/179}{\#179}).
+These range from space leaks\footnote{\url{https://github.com/AccelerateHS/accelerate/issues/181}} to random segfaults\footnote{\url{https://github.com/AccelerateHS/accelerate/issues/179}}.
 A list of open issues can be found at\footnote{\url{https://github.com/AccelerateHS/accelerate/labels/llvm\%20backend}}.
 
 
