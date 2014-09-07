@@ -326,7 +326,7 @@ In addition to this, the vectorizer will also unroll the inner loop to make fewe
 Figure \ref{fig:sumllvec} shows the corresponding LLVM code without loop unroll, as this increases code size dramatically.
 
 \begin{figure}[!htpb]
-\caption{Vectorized Sum}
+\caption{Vectorized sum}
 \label{fig:sumllvec}
 \begin{lstlisting}
 define i32 @sum(i32* nocapture readonly %a, i32 %length) {
@@ -662,7 +662,7 @@ void map
   }
 }
 \end{lstlisting}
-\caption{\lstinline[language=haskell]!map! Skeleton in C}
+\caption{Map Skeleton in C}
 \label{fig:mapskelC}
 \end{figure}
 
@@ -933,7 +933,7 @@ for.end:                       ; preds = %for
 \caption{Expanded for-loop}
 \label{fig:forquote2}
 \end{subfigure}
-\caption{For Loop using draft of \citetitle{holtz2014quote}}
+\caption{For-loop using draft of \citetitle{holtz2014quote}}
 \label{fig:forquote}
 \end{figure}
 
@@ -1102,7 +1102,7 @@ Figure \ref{fig:quasichart} shows a the design of a typical quasiquoter.
 \draw [arrow] (trans) -- node[anchor=south] {\lstinline[language=haskell]!Module!} (res);
 \end{tikzpicture}
 \end{center}
-\caption{flowchart quasiquoter}
+\caption{Flowchart quasiquoter}
 \label{fig:quasichart}
 \end{figure}
 
@@ -1283,7 +1283,7 @@ Figure \ref{fig:forchart} shows the process.
 \draw [arrow] (inc) -- (check);
 \end{tikzpicture}
 \end{center}
-\caption{flowchart for-loop}
+\caption{Flowchart for-loop}
 \label{fig:forchart}
 \end{figure}
 
@@ -1392,7 +1392,7 @@ newtype CodeGen a =
     deriving ( Functor, Applicative, Monad
              , MonadState CodeGenState)
 \end{lstlisting}
-\caption{\lstinline!CodeGen! Monad}
+\caption{\lstinline!CodeGen! monad}
 \label{fig:codegen}
 \end{figure}
 
@@ -1743,7 +1743,7 @@ makeKernelQ "map" [llgM|
     }
   |]
 \end{lstlisting}
-\caption{Map Skeleton}
+\caption{Map skeleton}
 \label{fig:mapskel}
 \end{figure}
 
@@ -1994,7 +1994,7 @@ makeKernelQ "fold" [llgM|
   }
 |]
 \end{lstlisting}
-\caption{Fold Skeleton}
+\caption{Fold skeleton}
 \label{fig:foldskel}
 \end{figure}
 
@@ -2301,7 +2301,7 @@ All programs are executed on all 16 cores unless stated otherwise.
 \begin{figure}
     \centering
     \includegraphics[width=0.8\textwidth]{images/benchmarks/ray/ray_sample}
-    \caption[Ray tracer]{Output of raytracer}
+    \caption{Output of raytracer}
     \label{fig:ray_sample}
 \end{figure}
 
@@ -2330,7 +2330,7 @@ Independent of the image size, the Accelerate version is about 45\% faster than 
     \caption{Speedup per CPU}
     \label{fig:ray_scale}
 \end{subfigure}
-\caption{Benchmarks raytracer}
+\caption{Benchmarks Ray Tracer}
 \end{figure}
 
 \newpage
@@ -2468,7 +2468,7 @@ withMCJIT        & 0.05   \\
 withModuleInEngine   & 0.2374 \\
 getGlobalFunctions & 9.8508 \\
 \end{tabular}
-\caption{Detailed runtime of online compilation}
+\caption{Runtime of online compilation}
     \label{fig:compile}
 \end{figure}
 
